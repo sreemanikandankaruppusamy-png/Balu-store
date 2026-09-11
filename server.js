@@ -418,12 +418,72 @@ class MongoDatabase {
 
 // Database Initialization: Detect MongoDB URI or use Local JSON DB
 const MONGODB_URI = process.env.MONGODB_URI || process.env.DATABASE_URL;
-let db;
-if (MONGODB_URI && (MONGODB_URI.startsWith('mongodb://') || MONGODB_URI.startsWith('mongodb+srv://'))) {
-  db = new MongoDatabase(MONGODB_URI);
-} else {
-  db = new LocalDatabase(DB_FILE);
+
+function isPlaceholderUri(uri) {
+  return !uri || uri.includes('<username>') || uri.includes('<password>') || uri.includes('xxxxx');
 }
+
+const localDb = new LocalDatabase(DB_FILE);
+let mongoDb = null;
+
+if (MONGODB_URI && (MONGODB_URI.startsWith('mongodb://') || MONGODB_URI.startsWith('mongodb+srv://')) && !isPlaceholderUri(MONGODB_URI)) {
+  mongoDb = new MongoDatabase(MONGODB_URI);
+}
+
+// Unified Database Provider
+const db = {
+  async getProducts() {
+    if (mongoDb && mongoDb.connected) return await mongoDb.getProducts();
+    return await localDb.getProducts();
+  },
+  async saveProduct(prod) {
+    if (mongoDb && mongoDb.connected) return await mongoDb.saveProduct(prod);
+    return await localDb.saveProduct(prod);
+  },
+  async updateProduct(id, updates) {
+    if (mongoDb && mongoDb.connected) return await mongoDb.updateProduct(id, updates);
+    return await localDb.updateProduct(id, updates);
+  },
+  async togglePublishProduct(id) {
+    if (mongoDb && mongoDb.connected) return await mongoDb.togglePublishProduct(id);
+    return await localDb.togglePublishProduct(id);
+  },
+  async deleteProduct(id) {
+    if (mongoDb && mongoDb.connected) return await mongoDb.deleteProduct(id);
+    return await localDb.deleteProduct(id);
+  },
+  async getOrders() {
+    if (mongoDb && mongoDb.connected) return await mongoDb.getOrders();
+    return await localDb.getOrders();
+  },
+  async createOrder(order) {
+    if (mongoDb && mongoDb.connected) return await mongoDb.createOrder(order);
+    return await localDb.createOrder(order);
+  },
+  async updateOrderStatus(id, status) {
+    if (mongoDb && mongoDb.connected) return await mongoDb.updateOrderStatus(id, status);
+    return await localDb.updateOrderStatus(id, status);
+  },
+  async deleteOrder(id) {
+    if (mongoDb && mongoDb.connected) return await mongoDb.deleteOrder(id);
+    return await localDb.deleteOrder(id);
+  },
+  async resetDemo() {
+    if (mongoDb && mongoDb.connected) return await mongoDb.resetDemo();
+    return await localDb.resetDemo();
+  },
+  async getAnnouncement() {
+    if (mongoDb && mongoDb.connected) return await mongoDb.getAnnouncement();
+    return await localDb.getAnnouncement();
+  },
+  async setAnnouncement(announcement) {
+    if (mongoDb && mongoDb.connected) return await mongoDb.setAnnouncement(announcement);
+    return await localDb.setAnnouncement(announcement);
+  },
+  isMongoConnected() {
+    return Boolean(mongoDb && mongoDb.connected);
+  }
+};
 
 // ==================== MIDDLEWARE ====================
 app.use(cors());
@@ -491,7 +551,7 @@ app.get('/api/health', (req, res) => {
 
 // Database Status endpoint
 app.get('/api/db-status', async (req, res) => {
-  const isMongo = db instanceof MongoDatabase && db.connected;
+  const isMongo = db.isMongoConnected();
   const products = await db.getProducts();
   const orders = await db.getOrders();
   res.json({
@@ -500,7 +560,7 @@ app.get('/api/db-status', async (req, res) => {
       type: isMongo ? 'MongoDB Atlas Cloud Database (Connected 🍃)' : 'Embedded Local Persistent Database (JSON / File Storage)',
       status: isMongo ? 'Connected to MongoDB Atlas 🟢' : 'Connected to Local File DB 🟢',
       location: isMongo ? 'MongoDB Atlas Cloud Cluster' : DB_FILE,
-      availableAdapters: ['Local File DB (active)', 'Supabase (PostgreSQL)', 'MongoDB Atlas (ready)', 'Vercel KV']
+      availableAdapters: ['MongoDB Atlas (Active Database)', 'Local Persistent File DB (Fallback)']
     },
     counts: {
       totalProducts: products.length,

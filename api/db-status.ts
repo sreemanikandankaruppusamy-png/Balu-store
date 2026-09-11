@@ -1,5 +1,5 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { isSupabaseActive, dbGetProducts, dbGetOrders } from './lib/db';
+import { isMongoActive, dbGetProducts, dbGetOrders } from './lib/db';
 
 export default async function handler(
   req: VercelRequest,
@@ -13,22 +13,20 @@ export default async function handler(
   }
 
   try {
-    const isSupabase = isSupabaseActive();
+    const isMongo = isMongoActive();
     const products = await dbGetProducts();
     const orders = await dbGetOrders();
 
-    const dbType = isSupabase 
-      ? 'Supabase Cloud Database (PostgreSQL)' 
-      : (process.env.KV_REST_API_URL || process.env.KV_URL) 
-        ? 'Vercel KV (Redis)' 
-        : 'Serverless Cache (Configure Supabase / KV in Vercel)';
+    const dbType = isMongo 
+      ? 'MongoDB Atlas Cloud Database 🍃' 
+      : 'Serverless Cache (Configure MONGODB_URI in Vercel)';
 
     return res.status(200).json({
       success: true,
       database: {
         type: dbType,
-        status: isSupabase || process.env.KV_REST_API_URL ? 'Connected 🟢' : 'Fallback Mode 🟡',
-        provider: isSupabase ? 'supabase' : 'kv'
+        status: isMongo ? 'Connected 🟢' : 'Fallback Mode 🟡',
+        provider: isMongo ? 'mongodb' : 'memory'
       },
       counts: {
         totalProducts: products.length,
