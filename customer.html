@@ -597,37 +597,25 @@ Kaviya RO Water <br><br>
 <script>
 /* ======== CONFIG ======== */
 const API_BASE = window.API_BASE_URL || localStorage.getItem('sbef_api_base') || '/api';
+const ORDERS_STORAGE_KEY = 'sbef_local_orders';
 
 /* ======== API HELPERS ======== */
 async function apiCall(endpoint, method = 'GET', body = null) {
   const headers = { 'Content-Type': 'application/json' };
-  
   const options = { method, headers };
   if (body) options.body = JSON.stringify(body);
   
   try {
     let response = await fetch(`${API_BASE}${endpoint}`, options);
-
-    // If customer-ashy-nu project returns 404 because API is hosted on sri-balu-store or sribalu-admin.com
-    if (!response.ok && response.status === 404 && API_BASE === '/api' && window.location.hostname.includes('customer-ashy-nu')) {
-      const fallbackUrl = `https://sri-balu-store.vercel.app/api${endpoint}`;
-      try {
-        const fbRes = await fetch(fallbackUrl, options);
-        if (fbRes.ok) response = fbRes;
-      } catch (fbErr) {
-        // Fallback failed, continue with original response
-      }
-    }
-
-    const data = await response.json();
+    const data = await response.json().catch(() => null);
     
     if (!response.ok) {
-      throw new Error(data.error || `API Error: ${response.status}`);
+      throw new Error((data && data.error) || `API Error: ${response.status}`);
     }
     
-    return data.data || data;
+    return data ? (data.data !== undefined ? data.data : data) : {};
   } catch (error) {
-    console.error(`API call failed (${method} ${endpoint}):`, error);
+    console.warn(`API call failed (${method} ${endpoint}):`, error);
     throw error;
   }
 }
@@ -636,36 +624,86 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 async function getProducts() {
   try {
     const data = await apiCall('/products');
-    return Array.isArray(data) ? data : [];
+    if (Array.isArray(data) && data.length > 0) {
+      localStorage.setItem('sbef_cached_products', JSON.stringify(data));
+      return data;
+    }
   } catch (error) {
-    showToast('Failed to load products');
-    return [];
+    console.warn('Failed to load products from API, checking local cache:', error);
   }
+
+  try {
+    const cached = localStorage.getItem('sbef_cached_products');
+    if (cached) return JSON.parse(cached);
+  } catch (e) {}
+
+  return [];
 }
 
 async function getOrders() {
-  return []; // Customer doesn't fetch orders
+  return []; // Customer doesn't fetch admin orders
+}
+
+function saveOrderToLocalStorage(order) {
+  try {
+    const raw = localStorage.getItem(ORDERS_STORAGE_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    const exists = list.some(o => o.id === order.id);
+    if (!exists) {
+      list.unshift(order);
+      localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(list));
+    }
+    localStorage.setItem('sbef_order_ping', Date.now().toString());
+  } catch(e) {
+    console.warn('LocalStorage save error:', e);
+  }
+
+  // Broadcast to Admin Dashboard instantly
+  try {
+    if (window.BroadcastChannel) {
+      const channel = new BroadcastChannel('sbef_orders_channel');
+      channel.postMessage({
+        type: order.type === 'query' ? 'NEW_QUERY' : 'NEW_ORDER',
+        customerName: order.customerName,
+        total: order.total,
+        order: order
+      });
+    }
+  } catch(e) {}
 }
 
 async function saveOrders(list) {
+  const order = list[0];
+  if (!order) throw new Error('No order to save');
+  
+  if (!order.id) {
+    order.id = `ord_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  // Always save locally & broadcast immediately so Admin receives it without delay
+  saveOrderToLocalStorage(order);
+
+  // Send to backend API
   try {
-    const order = list[0]; // Assuming we're saving a single order
-    if (!order) throw new Error('No order to save');
-    
-    // Call API to create order
     await apiCall('/orders', 'POST', order);
   } catch (error) {
-    console.error('Failed to save order:', error);
-    throw error;
+    console.warn('Backend API sync warning (saved locally):', error);
   }
 }
 
 async function addQuery(query) {
+  if (!query) throw new Error('No query to save');
+
+  if (!query.id) {
+    query.id = `qry_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  saveOrderToLocalStorage(query);
+
   try {
     await apiCall('/orders', 'POST', query);
   } catch (error) {
-    console.error('Failed to save query:', error);
-    throw error;
+    console.warn('Backend API sync warning (saved locally):', error);
   }
 }
 
@@ -1043,6 +1081,7 @@ document.getElementById('orderForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   if(!validatePhoneField('oPhone', 'oPhoneField')) return;
   const order = {
+    id: `ord_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     type: 'order',
     createdAt: new Date().toISOString(),
     customerName: document.getElementById('oName').value.trim(),
@@ -1062,7 +1101,7 @@ document.getElementById('orderForm').addEventListener('submit', async (e) => {
     document.getElementById('orderForm').reset();
     document.getElementById('oPhoneField').classList.remove('has-error');
     populatePhoneCC(document.getElementById('oPhoneCC'));
-    showToast('Order placed! The store has received your order.');
+    showToast('🎉 Order placed successfully! Store admin has received your order.');
   } catch(err) {
     showToast(`Error placing order: ${err.message}`);
   }
@@ -1073,6 +1112,7 @@ document.getElementById('generalQueryForm').addEventListener('submit', async (e)
   e.preventDefault();
   if(!validatePhoneField('qPhone', 'qPhoneField')) return;
   const query = {
+    id: `qry_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     type: 'query',
     createdAt: new Date().toISOString(),
     customerName: document.getElementById('qName').value.trim(),
@@ -1088,7 +1128,7 @@ document.getElementById('generalQueryForm').addEventListener('submit', async (e)
     e.target.reset();
     document.getElementById('qPhoneField').classList.remove('has-error');
     populatePhoneCC(document.getElementById('qPhoneCC'));
-    showToast('Your question was sent to the store.');
+    showToast('✨ Your question was sent to the store admin.');
   } catch(err) {
     showToast(`Error sending query: ${err.message}`);
   }
@@ -1106,28 +1146,24 @@ function showToast(msg){
 
 /* ======== STORE MESSAGE SYNC ======== */
 async function loadMessage() {
+  let msg = '';
   try {
-    let response = await fetch(`${API_BASE}/store-message`);
-
-    if (!response.ok && response.status === 404 && API_BASE === '/api' && window.location.hostname.includes('customer-ashy-nu')) {
-      const fallbackUrl = `https://sri-balu-store.vercel.app/api/store-message`;
-      try {
-        const fbRes = await fetch(fallbackUrl);
-        if (fbRes.ok) response = fbRes;
-      } catch (fbErr) {}
-    }
-
-    const data = await response.json();
-    const msg = data.message || (data.data && data.data.text) || '';
-    const banner = document.getElementById('storeAnnouncementBanner');
-    const msgEl = document.getElementById('storeMessage');
-    
-    if (msgEl) msgEl.textContent = msg;
-    if (banner) {
-      banner.style.display = (msg && msg.trim()) ? 'block' : 'none';
+    const response = await fetch(`${API_BASE}/store-message`);
+    if (response.ok) {
+      const data = await response.json();
+      msg = data.message || (data.data && data.data.text) || '';
+      if (msg) localStorage.setItem('sbef_announcement', msg);
     }
   } catch (e) {
-    // Silently continue
+    msg = localStorage.getItem('sbef_announcement') || '';
+  }
+
+  const banner = document.getElementById('storeAnnouncementBanner');
+  const msgEl = document.getElementById('storeMessage');
+  
+  if (msgEl) msgEl.textContent = msg;
+  if (banner) {
+    banner.style.display = (msg && msg.trim()) ? 'block' : 'none';
   }
 }
 

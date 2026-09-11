@@ -128,6 +128,86 @@
   ],
   "orders": [
     {
+      "id": "ord_1789121177840_2uiq2s",
+      "type": "order",
+      "customerName": "Sree Manikandan K",
+      "phone": "+91 9488043440",
+      "address": "pollachi",
+      "notes": "",
+      "message": "",
+      "items": [
+        {
+          "name": "JBL Charge 5 Portable Bluetooth Speaker",
+          "qty": 1,
+          "price": 13199,
+          "color": "Fiery Red"
+        }
+      ],
+      "total": 13199,
+      "status": "New",
+      "createdAt": "2026-09-11T10:06:17.840Z"
+    },
+    {
+      "id": "ord_1789118871421_jl8s2b",
+      "type": "order",
+      "customerName": "Prasath Test Customer",
+      "phone": "+91 9876543210",
+      "address": "123 Test Street, Erode",
+      "notes": "Urgent delivery please",
+      "message": "",
+      "items": [
+        {
+          "name": "Samsung 43\" Crystal 4K Smart TV",
+          "qty": 1,
+          "price": 24641.5,
+          "color": "Gloss Black"
+        }
+      ],
+      "total": 24641.5,
+      "status": "New",
+      "createdAt": "2026-09-11T09:27:51.421Z"
+    },
+    {
+      "id": "ord_1789118359026_rp3iay",
+      "type": "order",
+      "customerName": "Sree Manikandan K",
+      "phone": "+91 9488043440",
+      "address": "aliyar",
+      "notes": "",
+      "message": "",
+      "items": [
+        {
+          "name": "Solid Sheesham Wood 6-Seater Dining Table",
+          "qty": 1,
+          "price": 19350,
+          "color": "Walnut Dark"
+        }
+      ],
+      "total": 19350,
+      "status": "New",
+      "createdAt": "2026-09-11T09:19:19.026Z"
+    },
+    {
+      "id": "ord_1789118068181_5y5jpn",
+      "type": "order",
+      "customerName": "Prasath Test Customer",
+      "phone": "+91 9876543210",
+      "address": "123 Test Street, Erode",
+      "notes": "Urgent delivery please",
+      "message": "",
+      "items": [
+        {
+          "name": "Samsung 43\" Crystal 4K Smart TV",
+          "qty": 1,
+          "price": 24641.5,
+          "color": "Gloss Black"
+        }
+      ],
+      "total": 24641.5,
+      "status": "New",
+      "createdAt": "2026-09-11T09:14:28.181Z"
+    },
+    {
       "id": "ord_demo_101",
       "type": "order",
       "customerName": "Karthik Raja",

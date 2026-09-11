@@ -212,7 +212,7 @@
 <!-- ===================== ADMIN SHELL ===================== -->
 <div class="shell" id="shell">
   <aside class="sidebar">
-    <a href="https://customer-ashy-nu.vercel.app/customer.html" target="_blank" class="side-brand" style="text-decoration:none; color:inherit; cursor:pointer;" title="Visit Customer Storefront: Sri Balu Electronics & Furnitures">
+    <a href="customer.html" target="_blank" class="side-brand" style="text-decoration:none; color:inherit; cursor:pointer;" title="Visit Customer Storefront: Sri Balu Electronics & Furnitures">
       <svg width="30" height="30" viewBox="0 0 40 40" fill="none">
         <rect width="40" height="40" rx="10" fill="#E8A33D"/>
         <path d="M9 20h6l2-6 4 12 2-6h8" stroke="#1B2A4A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -238,7 +238,7 @@
           API: <a href="javascript:void(0)" onclick="configureApiUrl()" style="color:#63B3ED; text-decoration:underline;" id="currentApiDisplay">/api</a>
         </div>
       </div>
-      <a href="https://customer-ashy-nu.vercel.app/customer.html" target="_blank" class="logout-btn" style="display:block; text-align:center; text-decoration:none; margin-bottom:8px; background:rgba(232,163,61,0.18); border:1px solid var(--amber); color:var(--amber); font-weight:600;">
+      <a href="customer.html" target="_blank" class="logout-btn" style="display:block; text-align:center; text-decoration:none; margin-bottom:8px; background:rgba(232,163,61,0.18); border:1px solid var(--amber); color:var(--amber); font-weight:600;">
         Open Customer Storefront ↗
       </a>
       <button class="logout-btn" id="logoutBtn">Log Out</button>
@@ -409,12 +409,28 @@
 /* ======== CONFIG ======== */
 const API_BASE = window.API_BASE_URL || localStorage.getItem('sbef_api_base') || '/api';
 const SESSION_KEY = 'sbef_admin_session';
+const ORDERS_STORAGE_KEY = 'sbef_local_orders';
 const ADMIN_USER = 'Admin';
 const ADMIN_PASS = 'Admin@123';
 const CATEGORY_LABELS = { electronics:'Electronics', furniture:'Furniture', rowater:'RO Water' };
 
 function getAuthToken() {
   return sessionStorage.getItem('sbef_admin_token') || 'admin-secret-token';
+}
+
+function getLocalOrders() {
+  try {
+    const raw = localStorage.getItem(ORDERS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch(e) {
+    return [];
+  }
+}
+
+function saveLocalOrders(orders) {
+  try {
+    localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(orders));
+  } catch(e) {}
 }
 
 /* ======== API HELPERS ======== */
@@ -429,15 +445,15 @@ async function apiCall(endpoint, method = 'GET', body = null) {
   
   try {
     const response = await fetch(`${API_BASE}${endpoint}`, options);
-    const data = await response.json();
+    const data = await response.json().catch(() => null);
     
     if (!response.ok) {
-      throw new Error(data.error || `API Error: ${response.status}`);
+      throw new Error((data && data.error) || `API Error: ${response.status}`);
     }
     
-    return data.data || data;
+    return data ? (data.data !== undefined ? data.data : data) : {};
   } catch (error) {
-    console.error(`API call failed (${method} ${endpoint}):`, error);
+    console.warn(`API call failed (${method} ${endpoint}):`, error);
     throw error;
   }
 }
@@ -446,78 +462,96 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 async function getProducts() {
   try {
     const data = await apiCall('/products');
-    return Array.isArray(data) ? data : [];
+    if (Array.isArray(data) && data.length > 0) {
+      localStorage.setItem('sbef_cached_products', JSON.stringify(data));
+      return data;
+    }
   } catch (error) {
-    showToast('Failed to load products');
-    return [];
+    console.warn('Failed to load products from API, checking local cache:', error);
   }
+
+  try {
+    const cached = localStorage.getItem('sbef_cached_products');
+    if (cached) return JSON.parse(cached);
+  } catch (e) {}
+
+  return [];
 }
 
 async function saveProducts(list) {
-  // Note: This function is no longer used directly; use API endpoints instead
   console.warn('saveProducts() is deprecated; use API endpoints directly');
 }
 
 async function getOrders() {
+  let apiOrders = [];
   try {
     const data = await apiCall('/orders');
-    return Array.isArray(data) ? data : [];
+    if (Array.isArray(data)) {
+      apiOrders = data;
+    }
   } catch (error) {
-    showToast('Failed to load orders');
-    return [];
+    console.warn('API orders fetch failed, checking local orders:', error);
   }
+
+  const localOrders = getLocalOrders();
+
+  // Deduplicate and merge by ID
+  const orderMap = new Map();
+  // Add API orders
+  apiOrders.forEach(o => {
+    if (o && o.id) orderMap.set(o.id, o);
+  });
+  // Add any local orders
+  localOrders.forEach(o => {
+    if (o && o.id) {
+      if (!orderMap.has(o.id)) {
+        orderMap.set(o.id, o);
+      }
+    }
+  });
+
+  const merged = Array.from(orderMap.values());
+  merged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+  // Cache updated merged list locally
+  saveLocalOrders(merged);
+
+  return merged;
 }
 
 async function saveOrders(list) {
-  // Note: This function is no longer used directly; use API endpoints instead
   console.warn('saveOrders() is deprecated; use API endpoints directly');
 }
 
 async function addProduct(product) {
-  try {
-    return await apiCall('/products', 'POST', product);
-  } catch (error) {
-    throw error;
-  }
+  return await apiCall('/products', 'POST', product);
 }
 
 async function updateProduct(id, updates) {
-  try {
-    return await apiCall(`/products/${id}`, 'PUT', updates);
-  } catch (error) {
-    throw error;
-  }
+  return await apiCall(`/products/${id}`, 'PUT', updates);
 }
 
 async function togglePublishProduct(id) {
-  try {
-    return await apiCall(`/products/${id}`, 'PATCH');
-  } catch (error) {
-    throw error;
-  }
+  return await apiCall(`/products/${id}`, 'PATCH');
 }
 
 async function deleteProductAPI(id) {
-  try {
-    return await apiCall(`/products/${id}`, 'DELETE');
-  } catch (error) {
-    throw error;
-  }
+  return await apiCall(`/products/${id}`, 'DELETE');
 }
 
 async function updateOrderStatus(id, status) {
   try {
     return await apiCall(`/orders/${id}`, 'PATCH', { status });
-  } catch (error) {
-    throw error;
+  } catch(e) {
+    console.warn('API update order status warning:', e);
   }
 }
 
 async function deleteOrderAPI(id) {
   try {
     return await apiCall(`/orders/${id}`, 'DELETE');
-  } catch (error) {
-    throw error;
+  } catch(e) {
+    console.warn('API delete order warning:', e);
   }
 }
 
@@ -1020,9 +1054,20 @@ document.getElementById('orderFilters').addEventListener('click', (e) => {
 async function setStatus(id, status){
   try {
     await updateOrderStatus(id, status);
+    
+    // Also update in local storage cache
+    const local = getLocalOrders();
+    const item = local.find(o => o.id === id);
+    if (item) {
+      item.status = status;
+      item.updatedAt = new Date().toISOString();
+      saveLocalOrders(local);
+    }
+
     await renderOrders();
     await renderDashboard();
     await updateOrdersBadge();
+    showToast(`Order status updated to "${status}"`);
   } catch(err) {
     showToast(`Error: ${err.message}`);
   }
@@ -1035,7 +1080,13 @@ async function deleteOrder(id){
     if(!o) return;
     const label = o.type === 'order' ? 'order' : 'query';
     if(!confirm(`Delete this ${label} from ${o.customerName}? This cannot be undone.`)) return;
+
     await deleteOrderAPI(id);
+
+    // Remove from local storage cache
+    const local = getLocalOrders().filter(x => x.id !== id);
+    saveLocalOrders(local);
+
     await renderOrders();
     await renderDashboard();
     await updateOrdersBadge();
@@ -1069,7 +1120,15 @@ async function renderOrders(){
       return;
     }
 
-    wrap.innerHTML = list.map(o => `
+    wrap.innerHTML = list.map(o => {
+      let items = [];
+      if (Array.isArray(o.items)) {
+        items = o.items;
+      } else if (typeof o.items === 'string') {
+        try { items = JSON.parse(o.items); } catch(e) { items = []; }
+      }
+
+      return `
       <div class="order-card ${o.status==='Cancelled' ? 'cancelled' : ''}">
         <div class="order-top">
           <div>
@@ -1088,23 +1147,23 @@ async function renderOrders(){
 
         ${o.type === 'order' ? `
           <div class="order-items">
-            ${o.items.map(it => `<div class="li"><span>${escapeHtml(it.name)}${it.color ? ` <span style="color:var(--walnut);">(${escapeHtml(it.color)})</span>` : ''} × ${it.qty}</span><span class="mono">${money(it.price * it.qty)}</span></div>`).join('')}
+            ${items.map(it => `<div class="li"><span>${escapeHtml(it.name || 'Item')}${it.color ? ` <span style="color:var(--walnut);">(${escapeHtml(it.color)})</span>` : ''} × ${it.qty || 1}</span><span class="mono">${money((it.price || 0) * (it.qty || 1))}</span></div>`).join('')}
           </div>
           ${o.address ? `<div class="order-msg"><strong>Deliver to:</strong> ${escapeHtml(o.address)}</div>` : ''}
           ${o.notes ? `<div class="order-msg"><strong>Note:</strong> ${escapeHtml(o.notes)}</div>` : ''}
           <div class="order-foot">
             <button class="mini-btn delete" onclick="deleteOrder('${o.id}')">Delete</button>
-            <span class="order-total">${money(o.total)}</span>
+            <span class="order-total">${money(o.total || 0)}</span>
           </div>
         ` : `
-          <div class="order-msg">${escapeHtml(o.message)}</div>
+          <div class="order-msg">${escapeHtml(o.message || '')}</div>
           <div class="order-foot">
             <button class="mini-btn delete" onclick="deleteOrder('${o.id}')">Delete</button>
             <span></span>
           </div>
         `}
       </div>
-    `).join('');
+    `}).join('');
     await updateOrdersBadge();
   } catch(err) {
     showToast(`Error loading orders: ${err.message}`);
@@ -1120,6 +1179,29 @@ function showToast(msg){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
 }
+
+/* ======== REALTIME BROADCAST & STORAGE LISTENERS ======== */
+try {
+  if (window.BroadcastChannel) {
+    const ordersChannel = new BroadcastChannel('sbef_orders_channel');
+    ordersChannel.onmessage = async (event) => {
+      if (event.data && (event.data.type === 'NEW_ORDER' || event.data.type === 'NEW_QUERY')) {
+        showToast(`🔔 New ${event.data.type === 'NEW_ORDER' ? 'Order' : 'Question'} received from ${event.data.customerName || 'Customer'}!`);
+        await renderDashboard();
+        await renderOrders();
+        await updateOrdersBadge();
+      }
+    };
+  }
+} catch(e) {}
+
+window.addEventListener('storage', async (e) => {
+  if (e.key === 'sbef_local_orders' || e.key === 'sbef_order_ping') {
+    await renderDashboard();
+    await renderOrders();
+    await updateOrdersBadge();
+  }
+});
 
 /* ======== AUTO-REFRESH: Poll API every 4 seconds ======== */
 setInterval(async () => {

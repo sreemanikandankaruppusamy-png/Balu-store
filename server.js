@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const { MongoClient } = require('mongodb');
 require('dotenv').config({ path: path.join(__dirname, '.env.local') });
 require('dotenv').config(); // fallback to .env
 
@@ -132,7 +133,9 @@ const INITIAL_ORDERS = [
   }
 ];
 
-// ==================== DATABASE ADAPTER ====================
+// ==================== DATABASE ADAPTERS ====================
+
+// 1. Local Persistent JSON File Database
 class LocalDatabase {
   constructor(filePath) {
     this.filePath = filePath;
@@ -182,11 +185,11 @@ class LocalDatabase {
     fs.renameSync(tmpFile, this.filePath);
   }
 
-  getProducts() {
+  async getProducts() {
     return this.read().products || [];
   }
 
-  saveProduct(prod) {
+  async saveProduct(prod) {
     const data = this.read();
     data.products = data.products || [];
     data.products.push(prod);
@@ -194,7 +197,7 @@ class LocalDatabase {
     return prod;
   }
 
-  updateProduct(id, updates) {
+  async updateProduct(id, updates) {
     const data = this.read();
     const idx = (data.products || []).findIndex(p => p.id === id);
     if (idx === -1) return null;
@@ -207,7 +210,7 @@ class LocalDatabase {
     return data.products[idx];
   }
 
-  togglePublishProduct(id) {
+  async togglePublishProduct(id) {
     const data = this.read();
     const p = (data.products || []).find(x => x.id === id);
     if (!p) return null;
@@ -217,7 +220,7 @@ class LocalDatabase {
     return p;
   }
 
-  deleteProduct(id) {
+  async deleteProduct(id) {
     const data = this.read();
     const initialLen = (data.products || []).length;
     data.products = (data.products || []).filter(p => p.id !== id);
@@ -225,11 +228,11 @@ class LocalDatabase {
     return data.products.length < initialLen;
   }
 
-  getOrders() {
+  async getOrders() {
     return this.read().orders || [];
   }
 
-  createOrder(order) {
+  async createOrder(order) {
     const data = this.read();
     data.orders = data.orders || [];
     data.orders.unshift(order); // newest first
@@ -237,7 +240,7 @@ class LocalDatabase {
     return order;
   }
 
-  updateOrderStatus(id, status) {
+  async updateOrderStatus(id, status) {
     const data = this.read();
     const o = (data.orders || []).find(x => x.id === id);
     if (!o) return null;
@@ -247,7 +250,7 @@ class LocalDatabase {
     return o;
   }
 
-  deleteOrder(id) {
+  async deleteOrder(id) {
     const data = this.read();
     const initialLen = (data.orders || []).length;
     data.orders = (data.orders || []).filter(o => o.id !== id);
@@ -255,7 +258,7 @@ class LocalDatabase {
     return data.orders.length < initialLen;
   }
 
-  resetDemo() {
+  async resetDemo() {
     this.write({
       products: INITIAL_PRODUCTS,
       orders: INITIAL_ORDERS,
@@ -264,7 +267,7 @@ class LocalDatabase {
     return { products: INITIAL_PRODUCTS, orders: INITIAL_ORDERS };
   }
 
-  getAnnouncement() {
+  async getAnnouncement() {
     const data = this.read();
     return data.announcement || {
       text: 'Special Offer: Free delivery & installation in Erode on all orders above ₹10,000!',
@@ -273,7 +276,7 @@ class LocalDatabase {
     };
   }
 
-  setAnnouncement(announcement) {
+  async setAnnouncement(announcement) {
     const data = this.read();
     data.announcement = {
       text: announcement.text || '',
@@ -285,7 +288,142 @@ class LocalDatabase {
   }
 }
 
-const db = new LocalDatabase(DB_FILE);
+// 2. MongoDB Atlas Cloud Database Adapter
+class MongoDatabase {
+  constructor(uri) {
+    this.uri = uri;
+    this.client = new MongoClient(uri);
+    this.dbName = 'sri_balu_store';
+    this.connected = false;
+    this.init();
+  }
+
+  async init() {
+    try {
+      await this.client.connect();
+      this.db = this.client.db(this.dbName);
+      this.connected = true;
+      console.log('🍃 Connected to MongoDB Atlas Cloud Database:', this.dbName);
+
+      const count = await this.db.collection('products').countDocuments();
+      if (count === 0) {
+        await this.db.collection('products').insertMany(INITIAL_PRODUCTS);
+        await this.db.collection('orders').insertMany(INITIAL_ORDERS);
+        console.log('🍃 Seeded initial products and orders to MongoDB Atlas.');
+      }
+    } catch (err) {
+      console.error('❌ MongoDB Connection Warning:', err.message);
+      this.connected = false;
+    }
+  }
+
+  async getProducts() {
+    if (!this.connected) return [];
+    return await this.db.collection('products').find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray();
+  }
+
+  async saveProduct(prod) {
+    if (!this.connected) return prod;
+    await this.db.collection('products').insertOne({ ...prod });
+    return prod;
+  }
+
+  async updateProduct(id, updates) {
+    if (!this.connected) return null;
+    await this.db.collection('products').updateOne(
+      { id },
+      { $set: { ...updates, updatedAt: new Date().toISOString() } }
+    );
+    return await this.db.collection('products').findOne({ id }, { projection: { _id: 0 } });
+  }
+
+  async togglePublishProduct(id) {
+    if (!this.connected) return null;
+    const current = await this.db.collection('products').findOne({ id });
+    if (!current) return null;
+    const newPub = !current.published;
+    await this.db.collection('products').updateOne(
+      { id },
+      { $set: { published: newPub, updatedAt: new Date().toISOString() } }
+    );
+    return await this.db.collection('products').findOne({ id }, { projection: { _id: 0 } });
+  }
+
+  async deleteProduct(id) {
+    if (!this.connected) return false;
+    const res = await this.db.collection('products').deleteOne({ id });
+    return res.deletedCount > 0;
+  }
+
+  async getOrders() {
+    if (!this.connected) return [];
+    return await this.db.collection('orders').find({}, { projection: { _id: 0 } }).sort({ createdAt: -1 }).toArray();
+  }
+
+  async createOrder(order) {
+    if (!this.connected) return order;
+    await this.db.collection('orders').insertOne({ ...order });
+    return order;
+  }
+
+  async updateOrderStatus(id, status) {
+    if (!this.connected) return null;
+    await this.db.collection('orders').updateOne(
+      { id },
+      { $set: { status, updatedAt: new Date().toISOString() } }
+    );
+    return await this.db.collection('orders').findOne({ id }, { projection: { _id: 0 } });
+  }
+
+  async deleteOrder(id) {
+    if (!this.connected) return false;
+    const res = await this.db.collection('orders').deleteOne({ id });
+    return res.deletedCount > 0;
+  }
+
+  async resetDemo() {
+    if (!this.connected) return { products: INITIAL_PRODUCTS, orders: INITIAL_ORDERS };
+    await this.db.collection('products').deleteMany({});
+    await this.db.collection('orders').deleteMany({});
+    await this.db.collection('products').insertMany(INITIAL_PRODUCTS);
+    await this.db.collection('orders').insertMany(INITIAL_ORDERS);
+    return { products: INITIAL_PRODUCTS, orders: INITIAL_ORDERS };
+  }
+
+  async getAnnouncement() {
+    if (!this.connected) return { text: '', enabled: false };
+    const doc = await this.db.collection('settings').findOne({ key: 'announcement' });
+    return (doc && doc.value) ? doc.value : {
+      text: 'Special Offer: Free delivery & installation in Erode on all orders above ₹10,000!',
+      enabled: true,
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  async setAnnouncement(announcement) {
+    if (!this.connected) return announcement;
+    const payload = {
+      text: announcement.text || '',
+      enabled: announcement.enabled !== false,
+      updatedAt: new Date().toISOString()
+    };
+    await this.db.collection('settings').updateOne(
+      { key: 'announcement' },
+      { $set: { value: payload, updatedAt: new Date().toISOString() } },
+      { upsert: true }
+    );
+    return payload;
+  }
+}
+
+// Database Initialization: Detect MongoDB URI or use Local JSON DB
+const MONGODB_URI = process.env.MONGODB_URI || process.env.DATABASE_URL;
+let db;
+if (MONGODB_URI && (MONGODB_URI.startsWith('mongodb://') || MONGODB_URI.startsWith('mongodb+srv://'))) {
+  db = new MongoDatabase(MONGODB_URI);
+} else {
+  db = new LocalDatabase(DB_FILE);
+}
 
 // ==================== MIDDLEWARE ====================
 app.use(cors());
@@ -352,16 +490,17 @@ app.get('/api/health', (req, res) => {
 });
 
 // Database Status endpoint
-app.get('/api/db-status', (req, res) => {
-  const products = db.getProducts();
-  const orders = db.getOrders();
+app.get('/api/db-status', async (req, res) => {
+  const isMongo = db instanceof MongoDatabase && db.connected;
+  const products = await db.getProducts();
+  const orders = await db.getOrders();
   res.json({
     success: true,
     database: {
-      type: 'Embedded Local Persistent Database (JSON / File Storage)',
-      status: 'Connected 🟢',
-      location: DB_FILE,
-      availableAdapters: ['Local File DB (active)', 'Supabase (PostgreSQL)', 'MongoDB Atlas', 'Vercel KV']
+      type: isMongo ? 'MongoDB Atlas Cloud Database (Connected 🍃)' : 'Embedded Local Persistent Database (JSON / File Storage)',
+      status: isMongo ? 'Connected to MongoDB Atlas 🟢' : 'Connected to Local File DB 🟢',
+      location: isMongo ? 'MongoDB Atlas Cloud Cluster' : DB_FILE,
+      availableAdapters: ['Local File DB (active)', 'Supabase (PostgreSQL)', 'MongoDB Atlas (ready)', 'Vercel KV']
     },
     counts: {
       totalProducts: products.length,
@@ -373,48 +512,48 @@ app.get('/api/db-status', (req, res) => {
 });
 
 // Reset Demo Data (Admin protected)
-app.post('/api/seed', checkAdminAuth, (req, res) => {
-  const result = db.resetDemo();
+app.post('/api/seed', checkAdminAuth, async (req, res) => {
+  const result = await db.resetDemo();
   res.json({ success: true, message: 'Database reset to demo data', data: result });
 });
 
 // --- STORE MESSAGE / ANNOUNCEMENT API ---
-app.get('/api/store-message', (req, res) => {
-  const data = db.getAnnouncement();
+app.get('/api/store-message', async (req, res) => {
+  const data = await db.getAnnouncement();
   const msg = (data && data.text) ? data.text : '';
   res.json({ success: true, message: msg, data: data });
 });
 
-app.put('/api/store-message', checkAdminAuth, (req, res) => {
+app.put('/api/store-message', checkAdminAuth, async (req, res) => {
   const { message, text, enabled } = req.body || {};
   const msg = message !== undefined ? message : (text || '');
-  const updated = db.setAnnouncement({ text: msg, enabled: enabled !== false });
+  const updated = await db.setAnnouncement({ text: msg, enabled: enabled !== false });
   res.json({ success: true, message: msg, data: updated });
 });
 
-app.post('/api/store-message', checkAdminAuth, (req, res) => {
+app.post('/api/store-message', checkAdminAuth, async (req, res) => {
   const { message, text, enabled } = req.body || {};
   const msg = message !== undefined ? message : (text || '');
-  const updated = db.setAnnouncement({ text: msg, enabled: enabled !== false });
+  const updated = await db.setAnnouncement({ text: msg, enabled: enabled !== false });
   res.json({ success: true, message: msg, data: updated });
 });
 
-app.get('/api/announcement', (req, res) => {
-  res.json({ success: true, data: db.getAnnouncement() });
+app.get('/api/announcement', async (req, res) => {
+  res.json({ success: true, data: await db.getAnnouncement() });
 });
 
-app.post('/api/announcement', checkAdminAuth, (req, res) => {
+app.post('/api/announcement', checkAdminAuth, async (req, res) => {
   const { text, enabled } = req.body || {};
-  const updated = db.setAnnouncement({ text, enabled });
+  const updated = await db.setAnnouncement({ text, enabled });
   res.json({ success: true, data: updated });
 });
 
 // --- PRODUCTS API ---
 
 // GET /api/products (Public read)
-app.get('/api/products', (req, res) => {
+app.get('/api/products', async (req, res) => {
   try {
-    const products = db.getProducts();
+    const products = await db.getProducts();
     res.json({ success: true, data: products });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -422,7 +561,7 @@ app.get('/api/products', (req, res) => {
 });
 
 // POST /api/products (Admin create)
-app.post('/api/products', checkAdminAuth, (req, res) => {
+app.post('/api/products', checkAdminAuth, async (req, res) => {
   try {
     const { name, brand, category, price, discount, description, image, colors, published } = req.body;
     if (!name || !category || price === undefined) {
@@ -444,7 +583,7 @@ app.post('/api/products', checkAdminAuth, (req, res) => {
       updatedAt: new Date().toISOString()
     };
 
-    const saved = db.saveProduct(newProduct);
+    const saved = await db.saveProduct(newProduct);
     res.status(201).json({ success: true, data: saved });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -452,14 +591,14 @@ app.post('/api/products', checkAdminAuth, (req, res) => {
 });
 
 // PUT /api/products/:id (Admin update)
-app.put('/api/products/:id', checkAdminAuth, (req, res) => {
+app.put('/api/products/:id', checkAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body;
     if (updates.price !== undefined) updates.price = parseFloat(updates.price) || 0;
     if (updates.discount !== undefined) updates.discount = parseFloat(updates.discount) || 0;
 
-    const updated = db.updateProduct(id, updates);
+    const updated = await db.updateProduct(id, updates);
     if (!updated) {
       return res.status(404).json({ success: false, error: 'Product not found' });
     }
@@ -470,10 +609,10 @@ app.put('/api/products/:id', checkAdminAuth, (req, res) => {
 });
 
 // PATCH /api/products/:id (Admin toggle publish)
-app.patch('/api/products/:id', checkAdminAuth, (req, res) => {
+app.patch('/api/products/:id', checkAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const toggled = db.togglePublishProduct(id);
+    const toggled = await db.togglePublishProduct(id);
     if (!toggled) {
       return res.status(404).json({ success: false, error: 'Product not found' });
     }
@@ -484,10 +623,10 @@ app.patch('/api/products/:id', checkAdminAuth, (req, res) => {
 });
 
 // DELETE /api/products/:id (Admin delete)
-app.delete('/api/products/:id', checkAdminAuth, (req, res) => {
+app.delete('/api/products/:id', checkAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const success = db.deleteProduct(id);
+    const success = await db.deleteProduct(id);
     if (!success) {
       return res.status(404).json({ success: false, error: 'Product not found' });
     }
@@ -500,9 +639,9 @@ app.delete('/api/products/:id', checkAdminAuth, (req, res) => {
 // --- ORDERS API ---
 
 // GET /api/orders (Admin list)
-app.get('/api/orders', checkAdminAuth, (req, res) => {
+app.get('/api/orders', checkAdminAuth, async (req, res) => {
   try {
-    const orders = db.getOrders();
+    const orders = await db.getOrders();
     res.json({ success: true, data: orders });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -510,7 +649,7 @@ app.get('/api/orders', checkAdminAuth, (req, res) => {
 });
 
 // POST /api/orders (Public customer submission)
-app.post('/api/orders', (req, res) => {
+app.post('/api/orders', async (req, res) => {
   try {
     const { type, customerName, phone, message, address, notes, items, total } = req.body;
     if (!type || !customerName || !phone) {
@@ -532,7 +671,7 @@ app.post('/api/orders', (req, res) => {
       createdAt: new Date().toISOString()
     };
 
-    const saved = db.createOrder(newOrder);
+    const saved = await db.createOrder(newOrder);
     res.status(201).json({ success: true, data: saved });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -540,13 +679,13 @@ app.post('/api/orders', (req, res) => {
 });
 
 // PATCH /api/orders/:id (Admin update status)
-app.patch('/api/orders/:id', checkAdminAuth, (req, res) => {
+app.patch('/api/orders/:id', checkAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
     if (!status) return res.status(400).json({ success: false, error: 'Missing status' });
 
-    const updated = db.updateOrderStatus(id, status);
+    const updated = await db.updateOrderStatus(id, status);
     if (!updated) {
       return res.status(404).json({ success: false, error: 'Order not found' });
     }
@@ -557,10 +696,10 @@ app.patch('/api/orders/:id', checkAdminAuth, (req, res) => {
 });
 
 // DELETE /api/orders/:id (Admin delete order)
-app.delete('/api/orders/:id', checkAdminAuth, (req, res) => {
+app.delete('/api/orders/:id', checkAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const success = db.deleteOrder(id);
+    const success = await db.deleteOrder(id);
     if (!success) {
       return res.status(404).json({ success: false, error: 'Order not found' });
     }
