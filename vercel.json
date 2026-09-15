@@ -1,12 +1,5 @@
 {
-  "buildCommand": "echo 'No build needed'",
-  "installCommand": "npm install",
-  "framework": null,
-  "functions": {
-    "api/**/*.ts": {
-      "runtime": "@vercel/node@2.14.0"
-    }
-  },
+  "outputDirectory": ".",
   "rewrites": [
     {
       "source": "/admin",
@@ -15,10 +8,6 @@
     {
       "source": "/customer",
       "destination": "/customer.html"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/$1"
     }
   ]
 }
