@@ -17,6 +17,14 @@
   },
   "rewrites": [
     {
+      "source": "/admin",
+      "destination": "/admin.html"
+    },
+    {
+      "source": "/customer",
+      "destination": "/customer.html"
+    },
+    {
       "source": "/(.*)",
       "destination": "/$1"
     }
