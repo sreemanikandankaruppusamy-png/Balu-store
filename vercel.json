@@ -1,15 +1,7 @@
 {
   "buildCommand": "echo 'No build needed'",
-  "devCommand": "vercel dev",
   "installCommand": "npm install",
   "framework": null,
-  "env": [
-    {
-      "key": "API_SECRET_TOKEN",
-      "description": "Secret token for authenticating Admin API requests",
-      "value": "admin-secret-token-change-this-in-production"
-    }
-  ],
   "functions": {
     "api/**/*.ts": {
       "runtime": "@vercel/node@2.14.0"
