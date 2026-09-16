@@ -163,7 +163,31 @@
   .filter-chip:hover:not(.active){ border-color:var(--walnut); color:var(--walnut); }
 
   .grid{
-    display:grid; grid-template-columns:repeat(auto-fill,minmax(252px,1fr)); gap:22px; margin-top:26px;
+    display:grid; grid-template-columns:repeat(5, 1fr); gap:18px; margin-top:26px;
+  }
+  @media (max-width: 1200px) {
+    .grid { grid-template-columns: repeat(4, 1fr); }
+  }
+  @media (max-width: 992px) {
+    .grid { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 768px) {
+    .grid { grid-template-columns: repeat(2, 1fr); gap:14px; }
+  }
+  @media (max-width: 480px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  .view-more-wrap{
+    text-align:center; margin-top:34px;
+  }
+  .view-more-btn{
+    font-family:'Inter',sans-serif; font-weight:600; font-size:14.5px; border-radius:12px; cursor:pointer;
+    padding:13px 32px; border:1.5px solid var(--ink); background:var(--paper); color:var(--ink);
+    transition:all .2s ease; display:inline-flex; align-items:center; justify-content:center; gap:8px; box-shadow:0 4px 12px rgba(27,42,74,0.06);
+  }
+  .view-more-btn:hover{
+    background:var(--ink); color:var(--cream); transform:translateY(-2px); box-shadow:var(--shadow);
   }
   .card{
     background:var(--paper); border:1px solid var(--line); border-radius:16px; overflow:hidden;
@@ -472,6 +496,12 @@
     </div>
   </div>
   <div class="grid" id="productGrid"></div>
+  <div class="view-more-wrap" id="viewMoreWrap" style="display:none;">
+    <button type="button" class="view-more-btn" id="viewMoreBtn">
+      <span id="viewMoreText">View More Products</span>
+      <span id="viewMoreIcon">↓</span>
+    </button>
+  </div>
   <div class="empty-state" id="emptyState" style="display:none;">
     <div class="glyph">🛋️</div>
     <div>No items match right now — check back soon, or try a different filter.</div>
@@ -847,6 +877,9 @@ let modalQty = 1;
 let modalColorId = null;
 let selectedColorByProduct = {}; // productId -> colorId, for quick-add on cards
 
+const INITIAL_PRODUCTS_LIMIT = 5;
+let visibleProductsLimit = INITIAL_PRODUCTS_LIMIT;
+
 /* ---------------- Render catalog ---------------- */
 async function renderCatalog(){
   try {
@@ -861,15 +894,20 @@ async function renderCatalog(){
 
     const grid = document.getElementById('productGrid');
     const empty = document.getElementById('emptyState');
+    const viewMoreWrap = document.getElementById('viewMoreWrap');
     grid.innerHTML = '';
 
     if(list.length === 0){
       empty.style.display = 'block';
+      if(viewMoreWrap) viewMoreWrap.style.display = 'none';
       return;
     }
     empty.style.display = 'none';
 
-    list.forEach(p => {
+    const isExpanded = visibleProductsLimit >= list.length;
+    const displayedProducts = list.slice(0, visibleProductsLimit);
+
+    displayedProducts.forEach(p => {
       const discountPct = p.discount > 0 ? p.discount : 0;
       const finalPrice = discountPct > 0 ? Math.round(p.price * (1 - discountPct/100)) : p.price;
       const colors = p.colors || [];
@@ -918,10 +956,40 @@ async function renderCatalog(){
       });
       grid.appendChild(card);
     });
+
+    if(viewMoreWrap){
+      if(list.length > INITIAL_PRODUCTS_LIMIT){
+        viewMoreWrap.style.display = 'block';
+        const remaining = list.length - displayedProducts.length;
+        const textEl = document.getElementById('viewMoreText');
+        const iconEl = document.getElementById('viewMoreIcon');
+        if(!isExpanded){
+          if(textEl) textEl.textContent = `View More Products (${remaining} more)`;
+          if(iconEl) iconEl.textContent = '↓';
+        } else {
+          if(textEl) textEl.textContent = `Show Less`;
+          if(iconEl) iconEl.textContent = '↑';
+        }
+      } else {
+        viewMoreWrap.style.display = 'none';
+      }
+    }
   } catch(err) {
     showToast(`Error loading products: ${err.message}`);
   }
 }
+
+document.getElementById('viewMoreBtn')?.addEventListener('click', () => {
+  const isExpanded = document.getElementById('viewMoreText')?.textContent.includes('Show Less');
+  if(isExpanded){
+    visibleProductsLimit = INITIAL_PRODUCTS_LIMIT;
+    renderCatalog();
+    document.getElementById('catalog').scrollIntoView({ behavior: 'smooth' });
+  } else {
+    visibleProductsLimit += 5;
+    renderCatalog();
+  }
+});
 
 function escapeHtml(str){
   const d = document.createElement('div');
@@ -936,10 +1004,12 @@ document.getElementById('filterRow').addEventListener('click', (e) => {
   document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
   btn.classList.add('active');
   activeFilter = btn.dataset.cat;
+  visibleProductsLimit = INITIAL_PRODUCTS_LIMIT;
   renderCatalog();
 });
 document.getElementById('searchInput').addEventListener('input', (e) => {
   searchTerm = e.target.value;
+  visibleProductsLimit = INITIAL_PRODUCTS_LIMIT;
   renderCatalog();
 });
 

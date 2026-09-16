@@ -122,6 +122,60 @@
 
   .empty-row{ text-align:center; padding:40px 20px; color:var(--slate); }
 
+  /* Pagination */
+  .pagination-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 4px 4px;
+    margin-top: 14px;
+    border-top: 1px solid var(--line);
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .pagination-info {
+    font-size: 13px;
+    color: var(--slate);
+    font-weight: 500;
+  }
+  .pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .page-btn {
+    min-width: 34px;
+    height: 34px;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--cream);
+    color: var(--ink);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all .15s ease;
+  }
+  .page-btn:hover:not(:disabled) {
+    border-color: var(--walnut);
+    color: var(--walnut);
+    background: var(--paper);
+  }
+  .page-btn.active {
+    background: var(--ink);
+    color: var(--cream);
+    border-color: var(--ink);
+  }
+  .page-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
   /* Color variant builder */
   .color-list{ display:flex; flex-wrap:wrap; gap:10px; margin-bottom:12px; }
   .color-chip{ display:flex; align-items:center; gap:7px; background:var(--cream); border:1px solid var(--line); border-radius:999px; padding:5px 10px 5px 5px; font-size:12.5px; }
@@ -377,6 +431,10 @@
           </thead>
           <tbody id="productTableBody"></tbody>
         </table>
+        <div class="pagination-row" id="productPagination" style="display:none;">
+          <div class="pagination-info" id="productPaginationInfo">Showing 1–5 of 5 products</div>
+          <div class="pagination-controls" id="productPaginationControls"></div>
+        </div>
       </div>
     </div>
 
@@ -1004,6 +1062,7 @@ form.addEventListener('submit', async (e) => {
       showToast('Product updated');
     } else {
       await addProduct(productData);
+      currentProductPage = 1;
       showToast('Product added — remember to publish it');
     }
     resetForm();
@@ -1082,15 +1141,35 @@ async function deleteProduct(id){
   }
 }
 
+/* ======== PRODUCT PAGINATION STATE ======== */
+let currentProductPage = 1;
+const PRODUCTS_PER_PAGE = 5;
+
+function goToProductPage(page){
+  currentProductPage = page;
+  renderProductTable();
+}
+
 async function renderProductTable(){
   try {
     const products = await getProducts();
     const body = document.getElementById('productTableBody');
+    const paginationWrap = document.getElementById('productPagination');
+
     if(products.length === 0){
       body.innerHTML = `<tr><td colspan="5"><div class="empty-row">No products yet. Add your first item above.</div></td></tr>`;
+      if(paginationWrap) paginationWrap.style.display = 'none';
       return;
     }
-    body.innerHTML = products.map(p => `
+
+    const totalPages = Math.ceil(products.length / PRODUCTS_PER_PAGE);
+    if(currentProductPage > totalPages) currentProductPage = totalPages;
+    if(currentProductPage < 1) currentProductPage = 1;
+
+    const startIndex = (currentProductPage - 1) * PRODUCTS_PER_PAGE;
+    const pageProducts = products.slice(startIndex, startIndex + PRODUCTS_PER_PAGE);
+
+    body.innerHTML = pageProducts.map(p => `
       <tr>
         <td>
           <div class="prod-row">
@@ -1117,6 +1196,30 @@ async function renderProductTable(){
         </td>
       </tr>
     `).join('');
+
+    if(paginationWrap){
+      if(totalPages > 1){
+        paginationWrap.style.display = 'flex';
+        const startItem = startIndex + 1;
+        const endItem = Math.min(startIndex + PRODUCTS_PER_PAGE, products.length);
+        document.getElementById('productPaginationInfo').textContent = `Showing ${startItem}–${endItem} of ${products.length} products (Page ${currentProductPage} of ${totalPages})`;
+        
+        let controlsHtml = `
+          <button type="button" class="page-btn" onclick="goToProductPage(${currentProductPage - 1})" ${currentProductPage === 1 ? 'disabled' : ''} title="Previous Page">‹ Prev</button>
+        `;
+
+        for(let i = 1; i <= totalPages; i++){
+          controlsHtml += `<button type="button" class="page-btn ${i === currentProductPage ? 'active' : ''}" onclick="goToProductPage(${i})">${i}</button>`;
+        }
+
+        controlsHtml += `
+          <button type="button" class="page-btn" onclick="goToProductPage(${currentProductPage + 1})" ${currentProductPage === totalPages ? 'disabled' : ''} title="Next Page">Next ›</button>
+        `;
+        document.getElementById('productPaginationControls').innerHTML = controlsHtml;
+      } else {
+        paginationWrap.style.display = 'none';
+      }
+    }
   } catch(err) {
     showToast(`Error loading products: ${err.message}`);
   }
