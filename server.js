@@ -6,15 +6,25 @@ const { MongoClient } = require('mongodb');
 require('dotenv').config({ path: path.join(__dirname, '.env.local') });
 require('dotenv').config(); // fallback to .env
 
+const os = require('os');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const API_SECRET_TOKEN = process.env.API_SECRET_TOKEN || 'admin-secret-token';
-const DATA_DIR = path.join(__dirname, 'data');
+
+// In serverless environments like Vercel or AWS Lambda, /var/task is read-only.
+// We use /tmp or os.tmpdir() for local scratch files and keep in-memory fallback.
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
+const DATA_DIR = isServerless ? path.join(os.tmpdir(), 'sbef-data') : path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'store.json');
 
-// Ensure data directory exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+// Ensure data directory exists if filesystem allows
+try {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+} catch (err) {
+  console.warn('⚠️ Notice: Read-only filesystem detected, running with in-memory storage fallback.');
 }
 
 // Initial realistic seed products for Sri Balu Electronics & Furnitures
@@ -135,23 +145,33 @@ const INITIAL_ORDERS = [
 
 // ==================== DATABASE ADAPTERS ====================
 
-// 1. Local Persistent JSON File Database
+// 1. Local Persistent JSON File Database (with in-memory fallback for read-only cloud hosts)
 class LocalDatabase {
   constructor(filePath) {
     this.filePath = filePath;
+    this.memoryData = {
+      products: INITIAL_PRODUCTS,
+      orders: INITIAL_ORDERS,
+      announcement: {
+        text: 'Special Offer: Free delivery & installation in Erode on all orders above ₹10,000!',
+        enabled: true,
+        updatedAt: new Date().toISOString()
+      },
+      meta: { createdAt: new Date().toISOString(), version: '1.0' }
+    };
     this.init();
   }
 
   init() {
-    if (!fs.existsSync(this.filePath)) {
-      this.write({
-        products: INITIAL_PRODUCTS,
-        orders: INITIAL_ORDERS,
-        meta: { createdAt: new Date().toISOString(), version: '1.0' }
-      });
-      console.log('📦 Initialized local database with sample store products and orders.');
-    } else {
-      try {
+    try {
+      const dir = path.dirname(this.filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      if (!fs.existsSync(this.filePath)) {
+        this.write(this.memoryData);
+        console.log('📦 Initialized local database with sample store products and orders.');
+      } else {
         const data = this.read();
         let changed = false;
         if (!Array.isArray(data.products) || data.products.length === 0) {
@@ -163,26 +183,41 @@ class LocalDatabase {
           changed = true;
         }
         if (changed) this.write(data);
-      } catch (err) {
-        console.error('Error reading existing DB file, reinitializing:', err);
-        this.write({ products: INITIAL_PRODUCTS, orders: INITIAL_ORDERS });
       }
+    } catch (err) {
+      console.warn('⚠️ Local file initialization notice (using memory store):', err.message);
     }
   }
 
   read() {
     try {
-      const content = fs.readFileSync(this.filePath, 'utf8');
-      return JSON.parse(content);
+      if (fs.existsSync(this.filePath)) {
+        const content = fs.readFileSync(this.filePath, 'utf8');
+        const parsed = JSON.parse(content);
+        if (parsed && typeof parsed === 'object') {
+          this.memoryData = { ...this.memoryData, ...parsed };
+        }
+      }
     } catch (err) {
-      return { products: [], orders: [] };
+      // Return memoryData if filesystem read fails
     }
+    return this.memoryData || { products: INITIAL_PRODUCTS, orders: INITIAL_ORDERS };
   }
 
   write(data) {
-    const tmpFile = `${this.filePath}.tmp`;
-    fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), 'utf8');
-    fs.renameSync(tmpFile, this.filePath);
+    this.memoryData = data;
+    try {
+      const dir = path.dirname(this.filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const tmpFile = `${this.filePath}.tmp`;
+      fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), 'utf8');
+      fs.renameSync(tmpFile, this.filePath);
+    } catch (err) {
+      // In read-only cloud/serverless environments, file writing is not permitted.
+      // Data remains securely kept in memoryData during the instance lifecycle.
+    }
   }
 
   async getProducts() {
