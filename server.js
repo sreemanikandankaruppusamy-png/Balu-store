@@ -221,13 +221,14 @@ class LocalDatabase {
   }
 
   async getProducts() {
-    return this.read().products || [];
+    const list = this.read().products || [];
+    return [...list].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
   async saveProduct(prod) {
     const data = this.read();
     data.products = data.products || [];
-    data.products.push(prod);
+    data.products.unshift(prod); // Newest first
     this.write(data);
     return prod;
   }
@@ -524,9 +525,12 @@ const db = {
 app.use(cors());
 app.use(express.json({ limit: '15mb' })); // Support base64 image uploads from admin
 
-// Log requests in dev
+// Log requests in dev & prevent caching for API endpoints
 app.use((req, res, next) => {
   if (req.path.startsWith('/api')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     console.log(`[API] ${req.method} ${req.path}`);
   }
   next();

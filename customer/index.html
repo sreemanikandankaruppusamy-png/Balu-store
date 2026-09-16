@@ -602,11 +602,18 @@ const ORDERS_STORAGE_KEY = 'sbef_local_orders';
 /* ======== API HELPERS ======== */
 async function apiCall(endpoint, method = 'GET', body = null) {
   const headers = { 'Content-Type': 'application/json' };
-  const options = { method, headers };
+  const options = { 
+    method, 
+    headers,
+    cache: 'no-store'
+  };
   if (body) options.body = JSON.stringify(body);
   
+  const separator = endpoint.includes('?') ? '&' : '?';
+  const url = method === 'GET' ? `${API_BASE}${endpoint}${separator}_t=${Date.now()}` : `${API_BASE}${endpoint}`;
+
   try {
-    let response = await fetch(`${API_BASE}${endpoint}`, options);
+    let response = await fetch(url, options);
     const data = await response.json().catch(() => null);
     
     if (!response.ok) {
@@ -624,9 +631,9 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 async function getProducts() {
   try {
     const data = await apiCall('/products');
-    if (Array.isArray(data) && data.length > 0) {
+    if (Array.isArray(data)) {
       localStorage.setItem('sbef_cached_products', JSON.stringify(data));
-      return data;
+      return [...data].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
     }
   } catch (error) {
     console.warn('Failed to load products from API, checking local cache:', error);
@@ -634,7 +641,12 @@ async function getProducts() {
 
   try {
     const cached = localStorage.getItem('sbef_cached_products');
-    if (cached) return JSON.parse(cached);
+    if (cached) {
+      const list = JSON.parse(cached);
+      if (Array.isArray(list)) {
+        return list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      }
+    }
   } catch (e) {}
 
   return [];
