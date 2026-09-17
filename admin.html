@@ -567,23 +567,50 @@ const FALLBACK_PRODUCTS = [
   }
 ];
 
+function safeSetStorage(key, val) {
+  try {
+    const serialized = typeof val === 'string' ? val : JSON.stringify(val);
+    localStorage.setItem(key, serialized);
+  } catch (err) {
+    console.warn(`LocalStorage quota exceeded for ${key}, optimizing storage:`, err.message);
+    try {
+      const list = typeof val === 'string' ? JSON.parse(val) : val;
+      if (Array.isArray(list)) {
+        // Strip heavy base64 data URLs in offline cache to prevent quota overflow
+        const lightweight = list.map(item => {
+          if (item && item.image && typeof item.image === 'string' && item.image.startsWith('data:image') && item.image.length > 10000) {
+            return { ...item, image: null };
+          }
+          return item;
+        });
+        localStorage.setItem(key, JSON.stringify(lightweight));
+      }
+    } catch(e) {
+      // Ignore if browser storage is completely full
+    }
+  }
+}
+
+function safeGetStorage(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) {
+    return null;
+  }
+}
+
 function getAuthToken() {
   return sessionStorage.getItem('sbef_admin_token') || 'admin-secret-token';
 }
 
 function getLocalOrders() {
-  try {
-    const raw = localStorage.getItem(ORDERS_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch(e) {
-    return [];
-  }
+  const parsed = safeGetStorage(ORDERS_STORAGE_KEY);
+  return Array.isArray(parsed) ? parsed : [];
 }
 
 function saveLocalOrders(orders) {
-  try {
-    localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(orders));
-  } catch(e) {}
+  safeSetStorage(ORDERS_STORAGE_KEY, orders);
 }
 
 /* ======== API HELPERS ======== */
@@ -630,11 +657,8 @@ async function getProducts() {
     console.warn('Failed to load products from API, checking local cache:', error);
   }
 
-  let localProducts = [];
-  try {
-    const cached = localStorage.getItem('sbef_cached_products');
-    if (cached) localProducts = JSON.parse(cached) || [];
-  } catch(e) {}
+  const localCached = safeGetStorage('sbef_cached_products');
+  const localProducts = Array.isArray(localCached) ? localCached : [];
 
   if (apiProducts !== null) {
     const prodMap = new Map();
@@ -650,7 +674,7 @@ async function getProducts() {
     if (merged.length === 0) {
       merged = [...FALLBACK_PRODUCTS];
     }
-    localStorage.setItem('sbef_cached_products', JSON.stringify(merged));
+    safeSetStorage('sbef_cached_products', merged);
     return merged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
@@ -658,7 +682,7 @@ async function getProducts() {
     return localProducts.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
-  localStorage.setItem('sbef_cached_products', JSON.stringify(FALLBACK_PRODUCTS));
+  safeSetStorage('sbef_cached_products', FALLBACK_PRODUCTS);
   return [...FALLBACK_PRODUCTS];
 }
 
@@ -725,12 +749,10 @@ async function addProduct(product) {
   }
 
   // Update local cache immediately so the table updates with 0 delay
-  try {
-    const cached = localStorage.getItem('sbef_cached_products');
-    const list = cached ? JSON.parse(cached) : [];
-    const updated = [savedProd, ...list.filter(p => p.id !== savedProd.id)];
-    localStorage.setItem('sbef_cached_products', JSON.stringify(updated));
-  } catch(e) {}
+  const cached = safeGetStorage('sbef_cached_products');
+  const list = Array.isArray(cached) ? cached : [];
+  const updated = [savedProd, ...list.filter(p => p.id !== savedProd.id)];
+  safeSetStorage('sbef_cached_products', updated);
 
   return savedProd;
 }
@@ -745,15 +767,13 @@ async function updateProduct(id, updates) {
     updatedProd = { ...updates, id, updatedAt: new Date().toISOString() };
   }
 
-  try {
-    const cached = localStorage.getItem('sbef_cached_products');
-    const list = cached ? JSON.parse(cached) : [];
-    const idx = list.findIndex(p => p.id === id);
-    if (idx !== -1) {
-      list[idx] = { ...list[idx], ...updatedProd, updatedAt: new Date().toISOString() };
-      localStorage.setItem('sbef_cached_products', JSON.stringify(list));
-    }
-  } catch(e) {}
+  const cached = safeGetStorage('sbef_cached_products');
+  const list = Array.isArray(cached) ? cached : [];
+  const idx = list.findIndex(p => p.id === id);
+  if (idx !== -1) {
+    list[idx] = { ...list[idx], ...updatedProd, updatedAt: new Date().toISOString() };
+    safeSetStorage('sbef_cached_products', list);
+  }
 
   return updatedProd;
 }
@@ -766,16 +786,14 @@ async function togglePublishProduct(id) {
     console.warn('API toggle publish notice (toggling locally):', err);
   }
 
-  try {
-    const cached = localStorage.getItem('sbef_cached_products');
-    const list = cached ? JSON.parse(cached) : [];
-    const idx = list.findIndex(p => p.id === id);
-    if (idx !== -1) {
-      list[idx].published = (toggled && toggled.published !== undefined) ? toggled.published : !list[idx].published;
-      list[idx].updatedAt = new Date().toISOString();
-      localStorage.setItem('sbef_cached_products', JSON.stringify(list));
-    }
-  } catch(e) {}
+  const cached = safeGetStorage('sbef_cached_products');
+  const list = Array.isArray(cached) ? cached : [];
+  const idx = list.findIndex(p => p.id === id);
+  if (idx !== -1) {
+    list[idx].published = (toggled && toggled.published !== undefined) ? toggled.published : !list[idx].published;
+    list[idx].updatedAt = new Date().toISOString();
+    safeSetStorage('sbef_cached_products', list);
+  }
 
   return toggled;
 }
@@ -786,12 +804,10 @@ async function deleteProductAPI(id) {
   } catch(e) {
     console.warn('API delete product notice:', e);
   }
-  try {
-    const cached = localStorage.getItem('sbef_cached_products');
-    const list = cached ? JSON.parse(cached) : [];
-    const updated = list.filter(p => p.id !== id);
-    localStorage.setItem('sbef_cached_products', JSON.stringify(updated));
-  } catch(e) {}
+  const cached = safeGetStorage('sbef_cached_products');
+  const list = Array.isArray(cached) ? cached : [];
+  const updated = list.filter(p => p.id !== id);
+  safeSetStorage('sbef_cached_products', updated);
 }
 
 async function updateOrderStatus(id, status) {
@@ -1071,7 +1087,7 @@ document.getElementById('pImage').addEventListener('change', (e) => {
     showToast('Please choose an image file');
     return;
   }
-  resizeImage(file, 640, 640, (dataUrl) => {
+  resizeImage(file, 480, 480, (dataUrl) => {
     pendingImage = dataUrl;
     imageWasCleared = false;
     setImagePreview(dataUrl);
@@ -1085,21 +1101,23 @@ document.getElementById('clearImageBtn').addEventListener('click', () => {
   setImagePreview(null);
 });
 
-// Resize + compress an image file down to fit within maxW x maxH, returns a JPEG data URL
+// Resize + compress an image file down to fit within maxW x maxH, returns a compressed JPEG data URL
 function resizeImage(file, maxW, maxH, callback){
   const reader = new FileReader();
   reader.onload = (ev) => {
     const img = new Image();
     img.onload = () => {
+      const targetW = maxW || 480;
+      const targetH = maxH || 480;
       let w = img.width, h = img.height;
-      const ratio = Math.min(maxW / w, maxH / h, 1);
+      const ratio = Math.min(targetW / w, targetH / h, 1);
       w = Math.round(w * ratio);
       h = Math.round(h * ratio);
       const canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
-      callback(canvas.toDataURL('image/jpeg', 0.82));
+      callback(canvas.toDataURL('image/jpeg', 0.72));
     };
     img.src = ev.target.result;
   };

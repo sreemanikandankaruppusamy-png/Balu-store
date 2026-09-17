@@ -567,23 +567,47 @@ const FALLBACK_PRODUCTS = [
   }
 ];
 
+function safeSetStorage(key, val) {
+  try {
+    const serialized = typeof val === 'string' ? val : JSON.stringify(val);
+    localStorage.setItem(key, serialized);
+  } catch (err) {
+    console.warn(`LocalStorage quota exceeded for ${key}, optimizing storage:`, err.message);
+    try {
+      const list = typeof val === 'string' ? JSON.parse(val) : val;
+      if (Array.isArray(list)) {
+        const lightweight = list.map(item => {
+          if (item && item.image && typeof item.image === 'string' && item.image.startsWith('data:image') && item.image.length > 10000) {
+            return { ...item, image: null };
+          }
+          return item;
+        });
+        localStorage.setItem(key, JSON.stringify(lightweight));
+      }
+    } catch(e) {}
+  }
+}
+
+function safeGetStorage(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) {
+    return null;
+  }
+}
+
 function getAuthToken() {
   return sessionStorage.getItem('sbef_admin_token') || 'admin-secret-token';
 }
 
 function getLocalOrders() {
-  try {
-    const raw = localStorage.getItem(ORDERS_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch(e) {
-    return [];
-  }
+  const parsed = safeGetStorage(ORDERS_STORAGE_KEY);
+  return Array.isArray(parsed) ? parsed : [];
 }
 
 function saveLocalOrders(orders) {
-  try {
-    localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(orders));
-  } catch(e) {}
+  safeSetStorage(ORDERS_STORAGE_KEY, orders);
 }
 
 /* ======== API HELPERS ======== */
@@ -630,11 +654,8 @@ async function getProducts() {
     console.warn('Failed to load products from API, checking local cache:', error);
   }
 
-  let localProducts = [];
-  try {
-    const cached = localStorage.getItem('sbef_cached_products');
-    if (cached) localProducts = JSON.parse(cached) || [];
-  } catch(e) {}
+  const localCached = safeGetStorage('sbef_cached_products');
+  const localProducts = Array.isArray(localCached) ? localCached : [];
 
   if (apiProducts !== null) {
     const prodMap = new Map();
@@ -650,7 +671,7 @@ async function getProducts() {
     if (merged.length === 0) {
       merged = [...FALLBACK_PRODUCTS];
     }
-    localStorage.setItem('sbef_cached_products', JSON.stringify(merged));
+    safeSetStorage('sbef_cached_products', merged);
     return merged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
@@ -658,7 +679,7 @@ async function getProducts() {
     return localProducts.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
-  localStorage.setItem('sbef_cached_products', JSON.stringify(FALLBACK_PRODUCTS));
+  safeSetStorage('sbef_cached_products', FALLBACK_PRODUCTS);
   return [...FALLBACK_PRODUCTS];
 }
 
@@ -725,12 +746,10 @@ async function addProduct(product) {
   }
 
   // Update local cache immediately so the table updates with 0 delay
-  try {
-    const cached = localStorage.getItem('sbef_cached_products');
-    const list = cached ? JSON.parse(cached) : [];
-    const updated = [savedProd, ...list.filter(p => p.id !== savedProd.id)];
-    localStorage.setItem('sbef_cached_products', JSON.stringify(updated));
-  } catch(e) {}
+  const cached = safeGetStorage('sbef_cached_products');
+  const list = Array.isArray(cached) ? cached : [];
+  const updated = [savedProd, ...list.filter(p => p.id !== savedProd.id)];
+  safeSetStorage('sbef_cached_products', updated);
 
   return savedProd;
 }
@@ -745,15 +764,13 @@ async function updateProduct(id, updates) {
     updatedProd = { ...updates, id, updatedAt: new Date().toISOString() };
   }
 
-  try {
-    const cached = localStorage.getItem('sbef_cached_products');
-    const list = cached ? JSON.parse(cached) : [];
-    const idx = list.findIndex(p => p.id === id);
-    if (idx !== -1) {
-      list[idx] = { ...list[idx], ...updatedProd, updatedAt: new Date().toISOString() };
-      localStorage.setItem('sbef_cached_products', JSON.stringify(list));
-    }
-  } catch(e) {}
+  const cached = safeGetStorage('sbef_cached_products');
+  const list = Array.isArray(cached) ? cached : [];
+  const idx = list.findIndex(p => p.id === id);
+  if (idx !== -1) {
+    list[idx] = { ...list[idx], ...updatedProd, updatedAt: new Date().toISOString() };
+    safeSetStorage('sbef_cached_products', list);
+  }
 
   return updatedProd;
 }
@@ -766,16 +783,14 @@ async function togglePublishProduct(id) {
     console.warn('API toggle publish notice (toggling locally):', err);
   }
 
-  try {
-    const cached = localStorage.getItem('sbef_cached_products');
-    const list = cached ? JSON.parse(cached) : [];
-    const idx = list.findIndex(p => p.id === id);
-    if (idx !== -1) {
-      list[idx].published = (toggled && toggled.published !== undefined) ? toggled.published : !list[idx].published;
-      list[idx].updatedAt = new Date().toISOString();
-      localStorage.setItem('sbef_cached_products', JSON.stringify(list));
-    }
-  } catch(e) {}
+  const cached = safeGetStorage('sbef_cached_products');
+  const list = Array.isArray(cached) ? cached : [];
+  const idx = list.findIndex(p => p.id === id);
+  if (idx !== -1) {
+    list[idx].published = (toggled && toggled.published !== undefined) ? toggled.published : !list[idx].published;
+    list[idx].updatedAt = new Date().toISOString();
+    safeSetStorage('sbef_cached_products', list);
+  }
 
   return toggled;
 }
@@ -786,12 +801,10 @@ async function deleteProductAPI(id) {
   } catch(e) {
     console.warn('API delete product notice:', e);
   }
-  try {
-    const cached = localStorage.getItem('sbef_cached_products');
-    const list = cached ? JSON.parse(cached) : [];
-    const updated = list.filter(p => p.id !== id);
-    localStorage.setItem('sbef_cached_products', JSON.stringify(updated));
-  } catch(e) {}
+  const cached = safeGetStorage('sbef_cached_products');
+  const list = Array.isArray(cached) ? cached : [];
+  const updated = list.filter(p => p.id !== id);
+  safeSetStorage('sbef_cached_products', updated);
 }
 
 async function updateOrderStatus(id, status) {
@@ -863,7 +876,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     console.warn('API login endpoint not reachable, trying offline verification:', apiErr);
   }
 
-  // 2. Offline fallback (e.g. file:// preview or standalone dev)
+  // 2. Fallback offline verification for standalone local client demo
   if(u === ADMIN_USER && p === ADMIN_PASS){
     sessionStorage.setItem(SESSION_KEY, 'true');
     sessionStorage.setItem('sbef_admin_token', 'admin-secret-token');
@@ -878,65 +891,84 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
 document.getElementById('logoutBtn').addEventListener('click', () => {
   sessionStorage.removeItem(SESSION_KEY);
   sessionStorage.removeItem('sbef_admin_token');
-  location.reload();
+  document.getElementById('shell').classList.remove('show');
+  document.getElementById('loginWrap').style.display = 'flex';
+  document.getElementById('loginUser').value = '';
+  document.getElementById('loginPass').value = '';
 });
 
-/* ======== NAV SWITCHING ======== */
+/* ======== NAVIGATION ======== */
 async function switchView(view){
-  document.querySelectorAll('.view').forEach(v => v.style.display = 'none');
-  document.getElementById('view-' + view).style.display = 'block';
-  document.querySelectorAll('.side-nav button').forEach(b => b.classList.remove('active'));
-  document.querySelector(`.side-nav button[data-view="${view}"]`).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === view);
+  });
+  document.querySelectorAll('.view-panel').forEach(p => {
+    p.classList.toggle('active', p.id === 'view-' + view);
+  });
   if(view === 'dashboard') await renderDashboard();
   if(view === 'products') await renderProductTable();
   if(view === 'orders') await renderOrders();
+  if(view === 'announcement') await loadAnnouncement();
+  if(view === 'dbstatus') await updateDbStatus();
 }
-document.querySelectorAll('.side-nav button').forEach(btn => {
-  btn.addEventListener('click', () => switchView(btn.dataset.view));
-});
 
-/* ======== INIT ======== */
+/* ======== SETTINGS & DB STATUS ======== */
 function configureApiUrl() {
-  const current = localStorage.getItem('sbef_api_base') || '/api';
-  const custom = prompt('Enter Backend API URL (or /api for same domain):', current);
-  if (custom !== null) {
-    const clean = custom.trim().replace(/\/+$/, '');
-    if (!clean || clean === '/api') {
-      localStorage.removeItem('sbef_api_base');
-    } else {
-      localStorage.setItem('sbef_api_base', clean);
+  const current = API_BASE;
+  const input = prompt('Enter your Sri Balu Store API Server Base URL (e.g. /api or https://your-app.vercel.app/api):', current);
+  if (input !== null) {
+    const clean = input.trim().replace(/\/+$/, '');
+    if (clean) {
+      safeSetStorage('sbef_api_base', clean);
+      showToast('API URL saved. Reloading page...');
+      setTimeout(() => window.location.reload(), 800);
     }
-    location.reload();
   }
 }
 
 async function updateDbStatus() {
-  const displayEl = document.getElementById('currentApiDisplay');
-  if (displayEl) displayEl.textContent = localStorage.getItem('sbef_api_base') || '/api';
+  const statusEl = document.getElementById('dbStatusBadge');
+  const detailsEl = document.getElementById('dbStatusDetails');
+  if (!statusEl || !detailsEl) return;
+
+  statusEl.textContent = 'Checking connection...';
+  statusEl.className = 'badge';
 
   try {
     const res = await fetch(`${API_BASE}/db-status`);
-    if (!res.ok) return;
-    const json = await res.json();
-    if (json.success && json.database) {
-      const typeEl = document.getElementById('dbTypeName');
-      const detailEl = document.getElementById('dbDetailText');
-      if (typeEl) typeEl.textContent = json.database.status || 'Database Online';
-      if (detailEl) detailEl.textContent = json.database.type;
+    const data = await res.json();
+    if (res.ok && data.success) {
+      const isMongo = data.database.type.includes('MongoDB');
+      statusEl.textContent = isMongo ? 'MongoDB Atlas (Connected 🍃)' : 'Local File DB (Connected 🟢)';
+      statusEl.className = 'badge badge-green';
+      detailsEl.innerHTML = `
+        <div style="font-size:12px; color:var(--text-muted); line-height:1.6; margin-top:6px;">
+          <strong>Database:</strong> ${escapeHtml(data.database.type)}<br>
+          <strong>Status:</strong> ${escapeHtml(data.database.status)}<br>
+          <strong>Cloud Sync:</strong> ${isMongo ? 'Active Real-Time MongoDB Atlas Cloud Replication' : 'Local JSON Persistent Database (Offline Ready)'}<br>
+          <strong>Total Products:</strong> ${data.counts.totalProducts} (${data.counts.publishedProducts} published) | 
+          <strong>Total Orders:</strong> ${data.counts.totalOrders} (${data.counts.newOrders} new)
+        </div>
+      `;
+      return;
     }
-  } catch (e) {
-    const typeEl = document.getElementById('dbTypeName');
-    if (typeEl) typeEl.innerHTML = '<span style="color:#FEB2B2;">Connecting...</span>';
+  } catch (err) {
+    console.warn('DB Status check notice:', err);
   }
+
+  statusEl.textContent = 'Local Browser Storage Active 🟢';
+  statusEl.className = 'badge badge-gold';
+  detailsEl.innerHTML = `<div style="font-size:12px; color:var(--text-muted); margin-top:4px;">Running with zero-delay browser localStorage cache. Backend endpoints will sync when server is online.</div>`;
 }
 
-/* ======== STORE MESSAGE MANAGEMENT ======== */
+/* ======== STORE ANNOUNCEMENT / MESSAGE ======== */
 async function loadAnnouncement() {
+  const input = document.getElementById('announcementInput');
+  const toggle = document.getElementById('announcementToggle');
+  if (!input || !toggle) return;
+
   try {
     const res = await fetch(`${API_BASE}/store-message`);
-    if (!res.ok) return;
-    const json = await res.json();
-    const msg = json.message || (json.data && json.data.text) || '';
     const textEl = document.getElementById('announcementText');
     const enabledEl = document.getElementById('announcementEnabled');
     if (textEl) textEl.value = msg;

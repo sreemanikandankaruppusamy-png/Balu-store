@@ -751,6 +751,36 @@ async function apiCall(endpoint, method = 'GET', body = null) {
   }
 }
 
+function safeSetStorage(key, val) {
+  try {
+    const serialized = typeof val === 'string' ? val : JSON.stringify(val);
+    localStorage.setItem(key, serialized);
+  } catch (err) {
+    console.warn(`LocalStorage quota exceeded for ${key}, optimizing storage:`, err.message);
+    try {
+      const list = typeof val === 'string' ? JSON.parse(val) : val;
+      if (Array.isArray(list)) {
+        const lightweight = list.map(item => {
+          if (item && item.image && typeof item.image === 'string' && item.image.startsWith('data:image') && item.image.length > 10000) {
+            return { ...item, image: null };
+          }
+          return item;
+        });
+        localStorage.setItem(key, JSON.stringify(lightweight));
+      }
+    } catch(e) {}
+  }
+}
+
+function safeGetStorage(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch(e) {
+    return null;
+  }
+}
+
 /* ======== DATA FUNCTIONS ======== */
 async function getProducts() {
   let apiProducts = null;
@@ -763,11 +793,8 @@ async function getProducts() {
     console.warn('Failed to load products from API, checking local cache:', error);
   }
 
-  let localProducts = [];
-  try {
-    const cached = localStorage.getItem('sbef_cached_products');
-    if (cached) localProducts = JSON.parse(cached) || [];
-  } catch(e) {}
+  const localCached = safeGetStorage('sbef_cached_products');
+  const localProducts = Array.isArray(localCached) ? localCached : [];
 
   if (apiProducts !== null) {
     const prodMap = new Map();
@@ -782,7 +809,7 @@ async function getProducts() {
     if (merged.length === 0) {
       merged = [...FALLBACK_PRODUCTS];
     }
-    localStorage.setItem('sbef_cached_products', JSON.stringify(merged));
+    safeSetStorage('sbef_cached_products', merged);
     return merged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
@@ -790,7 +817,7 @@ async function getProducts() {
     return localProducts.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
-  localStorage.setItem('sbef_cached_products', JSON.stringify(FALLBACK_PRODUCTS));
+  safeSetStorage('sbef_cached_products', FALLBACK_PRODUCTS);
   return [...FALLBACK_PRODUCTS];
 }
 
@@ -799,18 +826,14 @@ async function getOrders() {
 }
 
 function saveOrderToLocalStorage(order) {
-  try {
-    const raw = localStorage.getItem(ORDERS_STORAGE_KEY);
-    const list = raw ? JSON.parse(raw) : [];
-    const exists = list.some(o => o.id === order.id);
-    if (!exists) {
-      list.unshift(order);
-      localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(list));
-    }
-    localStorage.setItem('sbef_order_ping', Date.now().toString());
-  } catch(e) {
-    console.warn('LocalStorage save error:', e);
+  const parsed = safeGetStorage(ORDERS_STORAGE_KEY);
+  const list = Array.isArray(parsed) ? parsed : [];
+  const exists = list.some(o => o.id === order.id);
+  if (!exists) {
+    list.unshift(order);
+    safeSetStorage(ORDERS_STORAGE_KEY, list);
   }
+  safeSetStorage('sbef_order_ping', Date.now().toString());
 
   // Broadcast to Admin Dashboard instantly
   try {
