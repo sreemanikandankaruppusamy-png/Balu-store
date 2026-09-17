@@ -676,7 +676,7 @@ app.post('/api/products', checkAdminAuth, async (req, res) => {
       discount: parseFloat(discount) || 0,
       description: description ? description.trim() : '',
       image: image || null,
-      published: published === true || published === 'true',
+      published: published !== undefined ? (published === true || published === 'true') : true,
       colors: Array.isArray(colors) ? colors : [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
