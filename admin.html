@@ -731,6 +731,15 @@ async function saveOrders(list) {
   console.warn('saveOrders() is deprecated; use API endpoints directly');
 }
 
+function notifyProductChange() {
+  try {
+    if (window.BroadcastChannel) {
+      const channel = new BroadcastChannel('sbef_orders_channel');
+      channel.postMessage({ type: 'PRODUCTS_UPDATED', timestamp: Date.now() });
+    }
+  } catch(e) {}
+}
+
 async function addProduct(product) {
   const prodToSave = {
     ...product,
@@ -753,6 +762,7 @@ async function addProduct(product) {
   const list = Array.isArray(cached) ? cached : [];
   const updated = [savedProd, ...list.filter(p => p.id !== savedProd.id)];
   safeSetStorage('sbef_cached_products', updated);
+  notifyProductChange();
 
   return savedProd;
 }
@@ -774,6 +784,7 @@ async function updateProduct(id, updates) {
     list[idx] = { ...list[idx], ...updatedProd, updatedAt: new Date().toISOString() };
     safeSetStorage('sbef_cached_products', list);
   }
+  notifyProductChange();
 
   return updatedProd;
 }
@@ -794,6 +805,7 @@ async function togglePublishProduct(id) {
     list[idx].updatedAt = new Date().toISOString();
     safeSetStorage('sbef_cached_products', list);
   }
+  notifyProductChange();
 
   return toggled;
 }
@@ -808,6 +820,7 @@ async function deleteProductAPI(id) {
   const list = Array.isArray(cached) ? cached : [];
   const updated = list.filter(p => p.id !== id);
   safeSetStorage('sbef_cached_products', updated);
+  notifyProductChange();
 }
 
 async function updateOrderStatus(id, status) {

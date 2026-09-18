@@ -1014,9 +1014,10 @@ let selectedColorByProduct = {}; // productId -> colorId, for quick-add on cards
 
 const INITIAL_PRODUCTS_LIMIT = 5;
 let visibleProductsLimit = INITIAL_PRODUCTS_LIMIT;
+let lastRenderedHash = '';
 
 /* ---------------- Render catalog ---------------- */
-async function renderCatalog(){
+async function renderCatalog(force = false){
   try {
     const products = (await getProducts()).filter(p => p.published);
 
@@ -1026,6 +1027,13 @@ async function renderCatalog(){
       const t = searchTerm.toLowerCase();
       list = list.filter(p => p.name.toLowerCase().includes(t) || (p.description||'').toLowerCase().includes(t) || (p.brand||'').toLowerCase().includes(t));
     }
+
+    const currentHash = JSON.stringify(list.map(p => ({ id: p.id, p: p.price, d: p.discount, n: p.name, pub: p.published, img: p.image }))) + activeFilter + searchTerm + visibleProductsLimit + JSON.stringify(selectedColorByProduct);
+
+    if (!force && currentHash === lastRenderedHash) {
+      return; // Data has not changed; skip DOM re-render completely to prevent screen refresh/flicker
+    }
+    lastRenderedHash = currentHash;
 
     const grid = document.getElementById('productGrid');
     const empty = document.getElementById('emptyState');
@@ -1369,35 +1377,50 @@ async function loadMessage() {
     if (response.ok) {
       const data = await response.json();
       msg = data.message || (data.data && data.data.text) || '';
-      if (msg) localStorage.setItem('sbef_announcement', msg);
+      if (msg) safeSetStorage('sbef_announcement', { text: msg, enabled: true });
     }
   } catch (e) {
-    msg = localStorage.getItem('sbef_announcement') || '';
+    const cached = safeGetStorage('sbef_announcement');
+    msg = (cached && cached.enabled !== false) ? (cached.text || '') : '';
   }
 
   const banner = document.getElementById('storeAnnouncementBanner');
   const msgEl = document.getElementById('storeMessage');
   
-  if (msgEl) msgEl.textContent = msg;
+  if (msgEl && msgEl.textContent !== msg) msgEl.textContent = msg;
   if (banner) {
-    banner.style.display = (msg && msg.trim()) ? 'block' : 'none';
+    const shouldShow = Boolean(msg && msg.trim());
+    const isShowing = banner.style.display === 'block';
+    if (shouldShow !== isShowing) {
+      banner.style.display = shouldShow ? 'block' : 'none';
+    }
   }
 }
 
 loadMessage();
-setInterval(loadMessage, 10000);
 
-/* ======== AUTO-REFRESH: Poll API every 8 seconds for new products ======== */
+// Listen for instant admin broadcast events without page reload
+if (window.BroadcastChannel) {
+  const channel = new BroadcastChannel('sbef_orders_channel');
+  channel.onmessage = (event) => {
+    if (event.data && event.data.type === 'PRODUCTS_UPDATED') {
+      renderCatalog(true);
+    }
+  };
+}
+
+// Background sync every 30s silently without screen flickering
 setInterval(() => {
-  renderCatalog();
-}, 8000);
+  renderCatalog(false);
+  loadMessage();
+}, 30000);
 
 /* ======== INIT ======== */
 populatePhoneCC(document.getElementById('qPhoneCC'));
 populatePhoneCC(document.getElementById('oPhoneCC'));
 setupPhoneField('qPhone', 'qPhoneField');
 setupPhoneField('oPhone', 'oPhoneField');
-renderCatalog();
+renderCatalog(true);
 renderCart();
 </script>
 </body>
