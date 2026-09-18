@@ -793,28 +793,16 @@ async function getProducts() {
     console.warn('Failed to load products from API, checking local cache:', error);
   }
 
-  const localCached = safeGetStorage('sbef_cached_products');
-  const localProducts = Array.isArray(localCached) ? localCached : [];
-
+  // When API is reachable, API data from MongoDB is the ground truth
   if (apiProducts !== null) {
-    const prodMap = new Map();
-    apiProducts.forEach(p => { if (p && p.id) prodMap.set(p.id, p); });
-    localProducts.forEach(p => {
-      if (p && p.id && !prodMap.has(p.id)) {
-        prodMap.set(p.id, p);
-      }
-    });
-
-    let merged = Array.from(prodMap.values());
-    if (merged.length === 0) {
-      merged = [...FALLBACK_PRODUCTS];
-    }
-    safeSetStorage('sbef_cached_products', merged);
-    return merged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    safeSetStorage('sbef_cached_products', apiProducts);
+    return apiProducts.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
-  if (localProducts && localProducts.length > 0) {
-    return localProducts.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  // Offline fallback only
+  const localCached = safeGetStorage('sbef_cached_products');
+  if (Array.isArray(localCached) && localCached.length > 0) {
+    return localCached.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
   safeSetStorage('sbef_cached_products', FALLBACK_PRODUCTS);

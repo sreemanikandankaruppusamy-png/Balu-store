@@ -654,29 +654,16 @@ async function getProducts() {
     console.warn('Failed to load products from API, checking local cache:', error);
   }
 
-  const localCached = safeGetStorage('sbef_cached_products');
-  const localProducts = Array.isArray(localCached) ? localCached : [];
-
+  // When API is reachable, API data from MongoDB is the ground truth
   if (apiProducts !== null) {
-    const prodMap = new Map();
-    apiProducts.forEach(p => { if (p && p.id) prodMap.set(p.id, p); });
-    localProducts.forEach(p => {
-      if (p && p.id && !prodMap.has(p.id)) {
-        prodMap.set(p.id, p);
-        apiCall('/products', 'POST', p).catch(() => {});
-      }
-    });
-
-    let merged = Array.from(prodMap.values());
-    if (merged.length === 0) {
-      merged = [...FALLBACK_PRODUCTS];
-    }
-    safeSetStorage('sbef_cached_products', merged);
-    return merged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    safeSetStorage('sbef_cached_products', apiProducts);
+    return apiProducts.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
-  if (localProducts && localProducts.length > 0) {
-    return localProducts.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  // Offline fallback only
+  const localCached = safeGetStorage('sbef_cached_products');
+  if (Array.isArray(localCached) && localCached.length > 0) {
+    return localCached.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }
 
   safeSetStorage('sbef_cached_products', FALLBACK_PRODUCTS);
@@ -1226,6 +1213,9 @@ document.getElementById('colorList').addEventListener('click', (e) => {
 const form = document.getElementById('productForm');
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
+  const submitBtn = document.getElementById('submitBtn');
+  if (submitBtn.disabled) return;
+
   const editId = document.getElementById('editId').value;
   const name = document.getElementById('pName').value.trim();
   const brand = document.getElementById('pBrand').value.trim();
@@ -1235,7 +1225,15 @@ form.addEventListener('submit', async (e) => {
   const description = document.getElementById('pDesc').value.trim();
   const colors = pendingColors.map(c => ({ ...c }));
 
+  if (!name || isNaN(price)) {
+    showToast('Please enter a valid product name and price.');
+    return;
+  }
+
   const productData = { name, brand, category, price, discount, description, image: pendingImage || null, colors };
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = editId ? 'Saving...' : 'Adding...';
 
   try {
     if(editId){
@@ -1247,10 +1245,13 @@ form.addEventListener('submit', async (e) => {
       showToast('Product added — remember to publish it');
     }
     resetForm();
-    await renderProductTable();
-    await renderDashboard();
+    await renderProductTable(true);
+    await renderDashboard(true);
   } catch(err) {
     showToast(`Error: ${err.message}`);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = document.getElementById('editId').value ? 'Save Changes' : 'Add Product';
   }
 });
 
