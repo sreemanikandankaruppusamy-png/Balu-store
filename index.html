@@ -1411,6 +1411,7 @@ if (window.BroadcastChannel) {
 
 // Background sync every 30s silently without screen flickering
 setInterval(() => {
+  if (document.hidden) return;
   renderCatalog(false);
   loadMessage();
 }, 30000);

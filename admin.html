@@ -576,7 +576,6 @@ function safeSetStorage(key, val) {
     try {
       const list = typeof val === 'string' ? JSON.parse(val) : val;
       if (Array.isArray(list)) {
-        // Strip heavy base64 data URLs in offline cache to prevent quota overflow
         const lightweight = list.map(item => {
           if (item && item.image && typeof item.image === 'string' && item.image.startsWith('data:image') && item.image.length > 10000) {
             return { ...item, image: null };
@@ -585,9 +584,7 @@ function safeSetStorage(key, val) {
         });
         localStorage.setItem(key, JSON.stringify(lightweight));
       }
-    } catch(e) {
-      // Ignore if browser storage is completely full
-    }
+    } catch(e) {}
   }
 }
 
@@ -892,7 +889,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     console.warn('API login endpoint not reachable, trying offline verification:', apiErr);
   }
 
-  // 2. Offline fallback (e.g. file:// preview or standalone dev)
+  // 2. Fallback offline verification for standalone local client demo
   if(u === ADMIN_USER && p === ADMIN_PASS){
     sessionStorage.setItem(SESSION_KEY, 'true');
     sessionStorage.setItem('sbef_admin_token', 'admin-secret-token');
@@ -907,69 +904,97 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
 document.getElementById('logoutBtn').addEventListener('click', () => {
   sessionStorage.removeItem(SESSION_KEY);
   sessionStorage.removeItem('sbef_admin_token');
-  location.reload();
+  document.getElementById('shell').classList.remove('show');
+  document.getElementById('loginWrap').style.display = 'flex';
+  document.getElementById('loginUser').value = '';
+  document.getElementById('loginPass').value = '';
 });
 
-/* ======== NAV SWITCHING ======== */
+/* ======== STATE HASHES TO PREVENT FLICKER / UNWANTED REFRESH ======== */
+let lastProductHash = '';
+let lastOrdersHash = '';
+let lastDashHash = '';
+let lastDbStatusHash = '';
+
+/* ======== NAVIGATION ======== */
 async function switchView(view){
   document.querySelectorAll('.view').forEach(v => v.style.display = 'none');
-  document.getElementById('view-' + view).style.display = 'block';
-  document.querySelectorAll('.side-nav button').forEach(b => b.classList.remove('active'));
-  document.querySelector(`.side-nav button[data-view="${view}"]`).classList.add('active');
-  if(view === 'dashboard') await renderDashboard();
-  if(view === 'products') await renderProductTable();
-  if(view === 'orders') await renderOrders();
+  const targetView = document.getElementById('view-' + view);
+  if (targetView) targetView.style.display = 'block';
+  document.querySelectorAll('.side-nav button').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === view);
+  });
+  if(view === 'dashboard') await renderDashboard(true);
+  if(view === 'products') await renderProductTable(true);
+  if(view === 'orders') await renderOrders(true);
+  if(view === 'announcement') await loadAnnouncement();
+  if(view === 'dbstatus') await updateDbStatus(true);
 }
 document.querySelectorAll('.side-nav button').forEach(btn => {
-  btn.addEventListener('click', () => switchView(btn.dataset.view));
+  if (btn.dataset.view) {
+    btn.addEventListener('click', () => switchView(btn.dataset.view));
+  }
 });
 
-/* ======== INIT ======== */
+/* ======== SETTINGS & DB STATUS ======== */
 function configureApiUrl() {
-  const current = localStorage.getItem('sbef_api_base') || '/api';
-  const custom = prompt('Enter Backend API URL (or /api for same domain):', current);
-  if (custom !== null) {
-    const clean = custom.trim().replace(/\/+$/, '');
-    if (!clean || clean === '/api') {
-      localStorage.removeItem('sbef_api_base');
-    } else {
-      localStorage.setItem('sbef_api_base', clean);
+  const current = API_BASE;
+  const input = prompt('Enter your Sri Balu Store API Server Base URL (e.g. /api or https://your-app.vercel.app/api):', current);
+  if (input !== null) {
+    const clean = input.trim().replace(/\/+$/, '');
+    if (clean && clean !== current) {
+      safeSetStorage('sbef_api_base', clean);
+      showToast('API URL updated.');
+      updateDbStatus(true);
     }
-    location.reload();
   }
 }
 
-async function updateDbStatus() {
-  const displayEl = document.getElementById('currentApiDisplay');
-  if (displayEl) displayEl.textContent = localStorage.getItem('sbef_api_base') || '/api';
+async function updateDbStatus(force = false) {
+  const statusEl = document.getElementById('dbStatusBadge');
+  const detailsEl = document.getElementById('dbDetailText');
+  const typeNameEl = document.getElementById('dbTypeName');
+  const currentApiEl = document.getElementById('currentApiDisplay');
+  if (currentApiEl) currentApiEl.textContent = localStorage.getItem('sbef_api_base') || '/api';
 
   try {
     const res = await fetch(`${API_BASE}/db-status`);
-    if (!res.ok) return;
-    const json = await res.json();
-    if (json.success && json.database) {
-      const typeEl = document.getElementById('dbTypeName');
-      const detailEl = document.getElementById('dbDetailText');
-      if (typeEl) typeEl.textContent = json.database.status || 'Database Online';
-      if (detailEl) detailEl.textContent = json.database.type;
+    const data = await res.json();
+    if (res.ok && data.success) {
+      const isMongo = data.database && data.database.type && data.database.type.includes('MongoDB');
+      const hash = `${isMongo}-${data.database?.status}-${data.counts?.totalProducts}-${data.counts?.publishedProducts}-${data.counts?.totalOrders}-${data.counts?.newOrders}`;
+      if (!force && hash === lastDbStatusHash) return;
+      lastDbStatusHash = hash;
+
+      if (typeNameEl) typeNameEl.textContent = isMongo ? 'MongoDB Cloud Online' : 'Local File DB Online';
+      if (detailsEl) detailsEl.textContent = isMongo ? 'Atlas Cloud Sync Active' : `Persistent JSON (${data.counts?.totalProducts || 0} items)`;
+      return;
     }
-  } catch (e) {
-    const typeEl = document.getElementById('dbTypeName');
-    if (typeEl) typeEl.innerHTML = '<span style="color:#FEB2B2;">Connecting...</span>';
+  } catch (err) {
+    // offline or unreachable
   }
+
+  const hash = 'local-storage';
+  if (!force && hash === lastDbStatusHash) return;
+  lastDbStatusHash = hash;
+  if (typeNameEl) typeNameEl.textContent = 'Browser Storage Active';
+  if (detailsEl) detailsEl.textContent = 'Local Browser Cache Mode';
 }
 
-/* ======== STORE MESSAGE MANAGEMENT ======== */
+/* ======== STORE ANNOUNCEMENT / MESSAGE ======== */
 async function loadAnnouncement() {
+  const textEl = document.getElementById('announcementText');
+  const enabledEl = document.getElementById('announcementEnabled');
+  if (!textEl && !enabledEl) return;
+
   try {
     const res = await fetch(`${API_BASE}/store-message`);
     if (!res.ok) return;
     const json = await res.json();
-    const msg = json.message || (json.data && json.data.text) || '';
-    const textEl = document.getElementById('announcementText');
-    const enabledEl = document.getElementById('announcementEnabled');
-    if (textEl) textEl.value = msg;
-    if (enabledEl && json.data && json.data.enabled !== undefined) enabledEl.checked = json.data.enabled;
+    if (json && json.data) {
+      if (textEl && json.data.message !== undefined) textEl.value = json.data.message;
+      if (enabledEl && json.data.enabled !== undefined) enabledEl.checked = Boolean(json.data.enabled);
+    }
   } catch (err) {
     console.warn('Failed to load store message:', err);
   }
@@ -984,7 +1009,6 @@ document.getElementById('announcementForm')?.addEventListener('submit', async (e
   btn.textContent = 'Broadcasting...';
 
   try {
-    // Updates /api/store-message with PUT and admin Bearer token
     await apiCall('/store-message', 'PUT', { message: text, enabled });
     showToast('📢 Store message updated & broadcast to Customer Storefront!');
   } catch (err) {
@@ -996,11 +1020,11 @@ document.getElementById('announcementForm')?.addEventListener('submit', async (e
 });
 
 async function initAdmin(){
-  updateDbStatus();
+  updateDbStatus(true);
   loadAnnouncement();
-  await renderDashboard();
-  await renderProductTable();
-  await renderOrders();
+  await renderDashboard(true);
+  await renderProductTable(true);
+  await renderOrders(true);
 }
 
 /* ---------------- Dashboard date filter ---------------- */
@@ -1056,10 +1080,23 @@ function filterOrdersByDate(orders){
 }
 
 /* ======== DASHBOARD ======== */
-async function renderDashboard(){
+async function renderDashboard(force = false){
   const products = await getProducts();
   const allOrders = await getOrders();
   const orders = filterOrdersByDate(allOrders);
+
+  const dashHash = JSON.stringify({
+    pub: products.filter(p=>p.published).length,
+    draft: products.filter(p=>!p.published).length,
+    ordersCount: orders.filter(o=>o.type==='order' && o.status==='New').length,
+    queriesCount: orders.filter(o=>o.type==='query' && o.status==='New').length,
+    recent: orders.slice(0,5).map(o => ({ id: o.id, t: o.type, s: o.status, w: o.customerName, tot: o.total, d: o.createdAt }))
+  }) + dashboardRange + (dashboardFrom ? dashboardFrom.toISOString() : '') + (dashboardTo ? dashboardTo.toISOString() : '');
+
+  if (!force && dashHash === lastDashHash) {
+    return;
+  }
+  lastDashHash = dashHash;
 
   document.getElementById('statPublished').textContent = products.filter(p=>p.published).length;
   document.getElementById('statDraft').textContent = products.filter(p=>!p.published).length;
@@ -1100,7 +1137,7 @@ document.getElementById('pImage').addEventListener('change', (e) => {
     showToast('Please choose an image file');
     return;
   }
-  resizeImage(file, 480, 480, (dataUrl) => {
+  resizeImage(file, 640, 640, (dataUrl) => {
     pendingImage = dataUrl;
     imageWasCleared = false;
     setImagePreview(dataUrl);
@@ -1114,23 +1151,21 @@ document.getElementById('clearImageBtn').addEventListener('click', () => {
   setImagePreview(null);
 });
 
-// Resize + compress an image file down to fit within maxW x maxH, returns a compressed JPEG data URL
+// Resize + compress an image file down to fit within maxW x maxH, returns a JPEG data URL
 function resizeImage(file, maxW, maxH, callback){
   const reader = new FileReader();
   reader.onload = (ev) => {
     const img = new Image();
     img.onload = () => {
-      const targetW = maxW || 480;
-      const targetH = maxH || 480;
       let w = img.width, h = img.height;
-      const ratio = Math.min(targetW / w, targetH / h, 1);
+      const ratio = Math.min(maxW / w, maxH / h, 1);
       w = Math.round(w * ratio);
       h = Math.round(h * ratio);
       const canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
-      callback(canvas.toDataURL('image/jpeg', 0.72));
+      callback(canvas.toDataURL('image/jpeg', 0.82));
     };
     img.src = ev.target.result;
   };
@@ -1293,12 +1328,34 @@ const PRODUCTS_PER_PAGE = 5;
 
 function goToProductPage(page){
   currentProductPage = page;
-  renderProductTable();
+  renderProductTable(true);
 }
 
-async function renderProductTable(){
+async function renderProductTable(force = false){
   try {
     const products = await getProducts();
+    const prodHash = JSON.stringify(products.map(p => ({
+      id: p.id,
+      name: p.name,
+      brand: p.brand,
+      cat: p.category,
+      price: p.price,
+      disc: p.discount,
+      pub: p.published,
+      img: p.image,
+      colors: p.colors
+    }))) + currentProductPage;
+
+    if (!force && prodHash === lastProductHash) {
+      return;
+    }
+    const isEditing = Boolean(document.getElementById('editId')?.value);
+    const isTyping = document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA');
+    if (!force && (isEditing || isTyping)) {
+      return;
+    }
+    lastProductHash = prodHash;
+
     const body = document.getElementById('productTableBody');
     const paginationWrap = document.getElementById('productPagination');
 
@@ -1367,7 +1424,7 @@ async function renderProductTable(){
       }
     }
   } catch(err) {
-    showToast(`Error loading products: ${err.message}`);
+    if (force) showToast(`Error loading products: ${err.message}`);
   }
 }
 
@@ -1379,7 +1436,7 @@ document.getElementById('orderFilters').addEventListener('click', (e) => {
   document.querySelectorAll('#orderFilters .filter-chip').forEach(c => c.classList.remove('active'));
   btn.classList.add('active');
   orderFilter = btn.dataset.f;
-  renderOrders();
+  renderOrders(true);
 });
 
 async function setStatus(id, status){
@@ -1395,8 +1452,8 @@ async function setStatus(id, status){
       saveLocalOrders(local);
     }
 
-    await renderOrders();
-    await renderDashboard();
+    await renderOrders(true);
+    await renderDashboard(true);
     await updateOrdersBadge();
     showToast(`Order status updated to "${status}"`);
   } catch(err) {
@@ -1418,8 +1475,8 @@ async function deleteOrder(id){
     const local = getLocalOrders().filter(x => x.id !== id);
     saveLocalOrders(local);
 
-    await renderOrders();
-    await renderDashboard();
+    await renderOrders(true);
+    await renderDashboard(true);
     await updateOrdersBadge();
     showToast(`${label === 'order' ? 'Order' : 'Query'} deleted`);
   } catch(err) {
@@ -1437,12 +1494,24 @@ async function updateOrdersBadge(){
   }
 }
 
-async function renderOrders(){
+async function renderOrders(force = false){
   try {
     const all = await getOrders();
     let list = all;
     if(orderFilter === 'order' || orderFilter === 'query') list = all.filter(o => o.type === orderFilter);
     else if(['New','Contacted','Completed','Cancelled'].includes(orderFilter)) list = all.filter(o => o.status === orderFilter);
+
+    const ordHash = JSON.stringify(list.map(o => ({ id: o.id, s: o.status, t: o.type, u: o.updatedAt, c: o.customerName, p: o.phone, it: o.items }))) + orderFilter;
+
+    if (!force && ordHash === lastOrdersHash) {
+      await updateOrdersBadge();
+      return;
+    }
+    const isFocusingSelect = document.activeElement && document.activeElement.classList.contains('status-select');
+    if (!force && isFocusingSelect) {
+      return;
+    }
+    lastOrdersHash = ordHash;
 
     const wrap = document.getElementById('ordersList');
     if(list.length === 0){
@@ -1497,7 +1566,7 @@ async function renderOrders(){
     `}).join('');
     await updateOrdersBadge();
   } catch(err) {
-    showToast(`Error loading orders: ${err.message}`);
+    if (force) showToast(`Error loading orders: ${err.message}`);
   }
 }
 
@@ -1518,8 +1587,8 @@ try {
     ordersChannel.onmessage = async (event) => {
       if (event.data && (event.data.type === 'NEW_ORDER' || event.data.type === 'NEW_QUERY')) {
         showToast(`🔔 New ${event.data.type === 'NEW_ORDER' ? 'Order' : 'Question'} received from ${event.data.customerName || 'Customer'}!`);
-        await renderDashboard();
-        await renderOrders();
+        await renderDashboard(true);
+        await renderOrders(true);
         await updateOrdersBadge();
       }
     };
@@ -1528,21 +1597,22 @@ try {
 
 window.addEventListener('storage', async (e) => {
   if (e.key === 'sbef_local_orders' || e.key === 'sbef_order_ping') {
-    await renderDashboard();
-    await renderOrders();
+    await renderDashboard(true);
+    await renderOrders(true);
     await updateOrdersBadge();
   }
 });
 
-/* ======== AUTO-REFRESH: Poll API every 4 seconds ======== */
+/* ======== BACKGROUND SYNC (Non-flickering, diff-checked) ======== */
 setInterval(async () => {
-  if(sessionStorage.getItem(SESSION_KEY) !== 'true') return;
-  updateDbStatus();
+  if (document.hidden) return;
+  if (sessionStorage.getItem(SESSION_KEY) !== 'true') return;
+  updateDbStatus(false);
   const activeView = document.querySelector('.side-nav button.active')?.dataset.view;
-  if(activeView === 'dashboard') await renderDashboard();
-  if(activeView === 'orders') await renderOrders();
-  if(activeView === 'products') await renderProductTable();
-}, 4000);
+  if (activeView === 'dashboard') await renderDashboard(false);
+  if (activeView === 'orders') await renderOrders(false);
+  if (activeView === 'products') await renderProductTable(false);
+}, 20000);
 
 /* ======== BOOT ======== */
 renderColorList();
