@@ -756,19 +756,7 @@ function safeSetStorage(key, val) {
     const serialized = typeof val === 'string' ? val : JSON.stringify(val);
     localStorage.setItem(key, serialized);
   } catch (err) {
-    console.warn(`LocalStorage quota exceeded for ${key}, optimizing storage:`, err.message);
-    try {
-      const list = typeof val === 'string' ? JSON.parse(val) : val;
-      if (Array.isArray(list)) {
-        const lightweight = list.map(item => {
-          if (item && item.image && typeof item.image === 'string' && item.image.startsWith('data:image') && item.image.length > 10000) {
-            return { ...item, image: null };
-          }
-          return item;
-        });
-        localStorage.setItem(key, JSON.stringify(lightweight));
-      }
-    } catch(e) {}
+    console.warn(`LocalStorage write notice for ${key}:`, err.message);
   }
 }
 
@@ -793,20 +781,51 @@ async function getProducts() {
     console.warn('Failed to load products from API, checking local cache:', error);
   }
 
-  // When API is reachable, API data from MongoDB is the ground truth
-  if (apiProducts !== null) {
-    safeSetStorage('sbef_cached_products', apiProducts);
-    return apiProducts.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-  }
-
-  // Offline fallback only
   const localCached = safeGetStorage('sbef_cached_products');
-  if (Array.isArray(localCached) && localCached.length > 0) {
-    return localCached.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  const localList = Array.isArray(localCached) ? localCached : [];
+
+  // Deduplicate and smart-merge API & Local products by ID
+  const productMap = new Map();
+
+  // First seed with local cache
+  localList.forEach(p => {
+    if (p && p.id) productMap.set(p.id, p);
+  });
+
+  // Then merge API products
+  if (Array.isArray(apiProducts)) {
+    apiProducts.forEach(p => {
+      if (p && p.id) {
+        const local = productMap.get(p.id);
+        if (!local) {
+          productMap.set(p.id, p);
+        } else {
+          const apiTime = new Date(p.updatedAt || p.createdAt || 0).getTime();
+          const locTime = new Date(local.updatedAt || local.createdAt || 0).getTime();
+          if (apiTime >= locTime) {
+            productMap.set(p.id, { ...local, ...p, image: p.image || local.image });
+          } else {
+            productMap.set(p.id, { ...p, ...local });
+          }
+        }
+      }
+    });
   }
 
-  safeSetStorage('sbef_cached_products', FALLBACK_PRODUCTS);
-  return [...FALLBACK_PRODUCTS];
+  let merged = Array.from(productMap.values());
+
+  // If completely empty on first launch, use fallback demo products
+  if (merged.length === 0 && apiProducts === null && localList.length === 0) {
+    merged = [...FALLBACK_PRODUCTS];
+  }
+
+  merged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+  if (merged.length > 0) {
+    safeSetStorage('sbef_cached_products', merged);
+  }
+
+  return merged;
 }
 
 async function getOrders() {
@@ -1000,7 +1019,7 @@ let modalQty = 1;
 let modalColorId = null;
 let selectedColorByProduct = {}; // productId -> colorId, for quick-add on cards
 
-const INITIAL_PRODUCTS_LIMIT = 5;
+const INITIAL_PRODUCTS_LIMIT = 12;
 let visibleProductsLimit = INITIAL_PRODUCTS_LIMIT;
 let lastRenderedHash = '';
 

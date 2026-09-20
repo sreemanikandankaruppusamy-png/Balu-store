@@ -654,20 +654,51 @@ async function getProducts() {
     console.warn('Failed to load products from API, checking local cache:', error);
   }
 
-  // When API is reachable, API data from MongoDB is the ground truth
-  if (apiProducts !== null) {
-    safeSetStorage('sbef_cached_products', apiProducts);
-    return apiProducts.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-  }
-
-  // Offline fallback only
   const localCached = safeGetStorage('sbef_cached_products');
-  if (Array.isArray(localCached) && localCached.length > 0) {
-    return localCached.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  const localList = Array.isArray(localCached) ? localCached : [];
+
+  // Deduplicate and smart-merge API & Local products by ID
+  const productMap = new Map();
+
+  // First seed with local cache
+  localList.forEach(p => {
+    if (p && p.id) productMap.set(p.id, p);
+  });
+
+  // Then merge API products
+  if (Array.isArray(apiProducts)) {
+    apiProducts.forEach(p => {
+      if (p && p.id) {
+        const local = productMap.get(p.id);
+        if (!local) {
+          productMap.set(p.id, p);
+        } else {
+          const apiTime = new Date(p.updatedAt || p.createdAt || 0).getTime();
+          const locTime = new Date(local.updatedAt || local.createdAt || 0).getTime();
+          if (apiTime >= locTime) {
+            productMap.set(p.id, { ...local, ...p, image: p.image || local.image });
+          } else {
+            productMap.set(p.id, { ...p, ...local });
+          }
+        }
+      }
+    });
   }
 
-  safeSetStorage('sbef_cached_products', FALLBACK_PRODUCTS);
-  return [...FALLBACK_PRODUCTS];
+  let merged = Array.from(productMap.values());
+
+  // If completely empty on first launch, use fallback demo products
+  if (merged.length === 0 && apiProducts === null && localList.length === 0) {
+    merged = [...FALLBACK_PRODUCTS];
+  }
+
+  merged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+  if (merged.length > 0) {
+    safeSetStorage('sbef_cached_products', merged);
+  }
+
+  return merged;
 }
 
 async function saveProducts(list) {
@@ -1138,21 +1169,24 @@ document.getElementById('clearImageBtn').addEventListener('click', () => {
   setImagePreview(null);
 });
 
-// Resize + compress an image file down to fit within maxW x maxH, returns a JPEG data URL
+// Resize + compress an image file down to fit within maxW x maxH, returns a compact JPEG data URL
 function resizeImage(file, maxW, maxH, callback){
   const reader = new FileReader();
   reader.onload = (ev) => {
     const img = new Image();
     img.onload = () => {
       let w = img.width, h = img.height;
-      const ratio = Math.min(maxW / w, maxH / h, 1);
+      const maxDim = 600;
+      const ratio = Math.min(maxDim / w, maxDim / h, 1);
       w = Math.round(w * ratio);
       h = Math.round(h * ratio);
       const canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);
-      callback(canvas.toDataURL('image/jpeg', 0.82));
+      callback(canvas.toDataURL('image/jpeg', 0.78));
     };
     img.src = ev.target.result;
   };
@@ -1230,7 +1264,20 @@ form.addEventListener('submit', async (e) => {
     return;
   }
 
-  const productData = { name, brand, category, price, discount, description, image: pendingImage || null, colors };
+  let finalImage = null;
+  if (editId) {
+    if (pendingImage) {
+      finalImage = pendingImage;
+    } else if (!imageWasCleared) {
+      const products = await getProducts();
+      const existing = products.find(x => x.id === editId);
+      finalImage = existing ? (existing.image || null) : null;
+    }
+  } else {
+    finalImage = pendingImage || null;
+  }
+
+  const productData = { name, brand, category, price, discount, description, image: finalImage, colors };
 
   submitBtn.disabled = true;
   submitBtn.textContent = editId ? 'Saving...' : 'Adding...';

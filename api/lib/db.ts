@@ -144,11 +144,19 @@ export async function connectToDatabase(): Promise<{ client: MongoClient | null;
     await client.connect();
     const db = client.db(DB_NAME);
 
-    // Auto-seed if empty
-    const count = await db.collection('products').countDocuments();
-    if (count === 0) {
-      await db.collection('products').insertMany(INITIAL_PRODUCTS);
-      await db.collection('orders').insertMany(INITIAL_ORDERS);
+    // Auto-seed only on first initialization if settings flag is not set
+    const meta = await db.collection('settings').findOne({ key: 'db_initialized' });
+    if (!meta) {
+      const count = await db.collection('products').countDocuments();
+      if (count === 0) {
+        await db.collection('products').insertMany(INITIAL_PRODUCTS);
+        await db.collection('orders').insertMany(INITIAL_ORDERS);
+      }
+      await db.collection('settings').updateOne(
+        { key: 'db_initialized' },
+        { $set: { key: 'db_initialized', value: true, createdAt: new Date().toISOString() } },
+        { upsert: true }
+      );
     }
 
     cachedClient = client;

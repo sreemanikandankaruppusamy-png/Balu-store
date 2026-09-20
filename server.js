@@ -174,7 +174,7 @@ class LocalDatabase {
       } else {
         const data = this.read();
         let changed = false;
-        if (!Array.isArray(data.products) || data.products.length === 0) {
+        if (!Array.isArray(data.products)) {
           data.products = INITIAL_PRODUCTS;
           changed = true;
         }
@@ -341,11 +341,19 @@ class MongoDatabase {
       this.connected = true;
       console.log('🍃 Connected to MongoDB Atlas Cloud Database:', this.dbName);
 
-      const count = await this.db.collection('products').countDocuments();
-      if (count === 0) {
-        await this.db.collection('products').insertMany(INITIAL_PRODUCTS);
-        await this.db.collection('orders').insertMany(INITIAL_ORDERS);
-        console.log('🍃 Seeded initial products and orders to MongoDB Atlas.');
+      const meta = await this.db.collection('settings').findOne({ key: 'db_initialized' });
+      if (!meta) {
+        const count = await this.db.collection('products').countDocuments();
+        if (count === 0) {
+          await this.db.collection('products').insertMany(INITIAL_PRODUCTS);
+          await this.db.collection('orders').insertMany(INITIAL_ORDERS);
+          console.log('🍃 Seeded initial products and orders to MongoDB Atlas.');
+        }
+        await this.db.collection('settings').updateOne(
+          { key: 'db_initialized' },
+          { $set: { key: 'db_initialized', value: true, createdAt: new Date().toISOString() } },
+          { upsert: true }
+        );
       }
     } catch (err) {
       console.error('❌ MongoDB Connection Warning:', err.message);
@@ -360,7 +368,11 @@ class MongoDatabase {
 
   async saveProduct(prod) {
     if (!this.connected) return prod;
-    await this.db.collection('products').insertOne({ ...prod });
+    await this.db.collection('products').updateOne(
+      { id: prod.id },
+      { $set: { ...prod, updatedAt: new Date().toISOString() } },
+      { upsert: true }
+    );
     return prod;
   }
 
