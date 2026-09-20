@@ -1035,7 +1035,7 @@ async function renderCatalog(force = false){
       list = list.filter(p => p.name.toLowerCase().includes(t) || (p.description||'').toLowerCase().includes(t) || (p.brand||'').toLowerCase().includes(t));
     }
 
-    const currentHash = JSON.stringify(list.map(p => ({ id: p.id, p: p.price, d: p.discount, n: p.name, pub: p.published, img: p.image }))) + activeFilter + searchTerm + visibleProductsLimit + JSON.stringify(selectedColorByProduct);
+    const currentHash = JSON.stringify(list.map(p => ({ id: p.id, p: p.price, d: p.discount, n: p.name, b: p.brand, desc: p.description, pub: p.published, img: p.image, u: p.updatedAt, c: p.colors }))) + activeFilter + searchTerm + visibleProductsLimit + JSON.stringify(selectedColorByProduct);
 
     if (!force && currentHash === lastRenderedHash) {
       return; // Data has not changed; skip DOM re-render completely to prevent screen refresh/flicker
@@ -1406,22 +1406,31 @@ async function loadMessage() {
 
 loadMessage();
 
-// Listen for instant admin broadcast events without page reload
+// Listen for instant admin broadcast and storage events without page reload
 if (window.BroadcastChannel) {
   const channel = new BroadcastChannel('sbef_orders_channel');
   channel.onmessage = (event) => {
-    if (event.data && event.data.type === 'PRODUCTS_UPDATED') {
+    if (event.data && (event.data.type === 'PRODUCTS_UPDATED' || event.data.type === 'ANNOUNCEMENT_UPDATED')) {
       renderCatalog(true);
+      loadMessage();
     }
   };
 }
 
-// Background sync every 30s silently without screen flickering
+// Storage event fires instantly across all browser tabs on same device (0ms delay)
+window.addEventListener('storage', (e) => {
+  if (e.key === 'sbef_cached_products' || e.key === 'sbef_product_ping' || e.key === 'sbef_announcement') {
+    renderCatalog(true);
+    loadMessage();
+  }
+});
+
+// Fast real-time background sync every 3 seconds
 setInterval(() => {
   if (document.hidden) return;
   renderCatalog(false);
   loadMessage();
-}, 30000);
+}, 3000);
 
 /* ======== INIT ======== */
 populatePhoneCC(document.getElementById('qPhoneCC'));

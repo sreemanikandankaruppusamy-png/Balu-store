@@ -747,6 +747,7 @@ async function saveOrders(list) {
 }
 
 function notifyProductChange() {
+  safeSetStorage('sbef_product_ping', Date.now().toString());
   try {
     if (window.BroadcastChannel) {
       const channel = new BroadcastChannel('sbef_orders_channel');
@@ -1028,6 +1029,14 @@ document.getElementById('announcementForm')?.addEventListener('submit', async (e
 
   try {
     await apiCall('/store-message', 'PUT', { message: text, enabled });
+    safeSetStorage('sbef_announcement', { text, enabled });
+    safeSetStorage('sbef_product_ping', Date.now().toString());
+    try {
+      if (window.BroadcastChannel) {
+        const channel = new BroadcastChannel('sbef_orders_channel');
+        channel.postMessage({ type: 'ANNOUNCEMENT_UPDATED', text, enabled });
+      }
+    } catch(e) {}
     showToast('📢 Store message updated & broadcast to Customer Storefront!');
   } catch (err) {
     showToast(`Failed to update store message: ${err.message}`);
@@ -1644,14 +1653,15 @@ try {
 } catch(e) {}
 
 window.addEventListener('storage', async (e) => {
-  if (e.key === 'sbef_local_orders' || e.key === 'sbef_order_ping') {
+  if (e.key === 'sbef_local_orders' || e.key === 'sbef_order_ping' || e.key === 'sbef_cached_products' || e.key === 'sbef_product_ping') {
     await renderDashboard(true);
     await renderOrders(true);
+    await renderProductTable(true);
     await updateOrdersBadge();
   }
 });
 
-/* ======== BACKGROUND SYNC (Non-flickering, diff-checked) ======== */
+/* ======== BACKGROUND SYNC (Fast 3s Real-Time Sync) ======== */
 setInterval(async () => {
   if (document.hidden) return;
   if (sessionStorage.getItem(SESSION_KEY) !== 'true') return;
@@ -1660,7 +1670,7 @@ setInterval(async () => {
   if (activeView === 'dashboard') await renderDashboard(false);
   if (activeView === 'orders') await renderOrders(false);
   if (activeView === 'products') await renderProductTable(false);
-}, 20000);
+}, 3000);
 
 /* ======== BOOT ======== */
 renderColorList();
