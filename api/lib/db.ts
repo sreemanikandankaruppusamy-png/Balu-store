@@ -7,6 +7,9 @@ const DB_NAME = 'sri_balu_store';
 let cachedClient: MongoClient | null = null;
 let cachedDb: Db | null = null;
 
+// Fixed static dates prevent cold-start re-seeding from generating "newer" timestamps
+const DEMO_SEED_DATE = '2026-01-01T00:00:00.000Z';
+
 const INITIAL_PRODUCTS = [
   {
     id: 'id_demo_tv_01',
@@ -19,8 +22,8 @@ const INITIAL_PRODUCTS = [
     image: 'https://images.unsplash.com/photo-1593359677879-a4bb92f829d1?w=600&auto=format&fit=crop&q=80',
     published: true,
     colors: [{ id: 'c1', name: 'Gloss Black', hex: '#1B2A4A' }],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    createdAt: DEMO_SEED_DATE,
+    updatedAt: DEMO_SEED_DATE
   },
   {
     id: 'id_demo_table_02',
@@ -36,8 +39,8 @@ const INITIAL_PRODUCTS = [
       { id: 'c2', name: 'Walnut Dark', hex: '#6B4226' },
       { id: 'c3', name: 'Natural Honey', hex: '#C9A86A' }
     ],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    createdAt: DEMO_SEED_DATE,
+    updatedAt: DEMO_SEED_DATE
   },
   {
     id: 'id_demo_speaker_03',
@@ -54,8 +57,8 @@ const INITIAL_PRODUCTS = [
       { id: 'c5', name: 'Midnight Black', hex: '#1B2A4A' },
       { id: 'c6', name: 'Ocean Blue', hex: '#3B5BA5' }
     ],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    createdAt: DEMO_SEED_DATE,
+    updatedAt: DEMO_SEED_DATE
   },
   {
     id: 'id_demo_sofa_04',
@@ -71,8 +74,8 @@ const INITIAL_PRODUCTS = [
       { id: 'c7', name: 'Slate Grey', hex: '#4A5568' },
       { id: 'c8', name: 'Warm Cream', hex: '#E2D9C9' }
     ],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    createdAt: DEMO_SEED_DATE,
+    updatedAt: DEMO_SEED_DATE
   },
   {
     id: 'id_demo_purifier_05',
@@ -88,8 +91,8 @@ const INITIAL_PRODUCTS = [
       { id: 'c9', name: 'Arctic White', hex: '#FFFFFF' },
       { id: 'c10', name: 'Piano Black', hex: '#1B2A4A' }
     ],
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    createdAt: DEMO_SEED_DATE,
+    updatedAt: DEMO_SEED_DATE
   }
 ];
 
