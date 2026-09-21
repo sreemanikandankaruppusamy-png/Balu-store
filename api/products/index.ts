@@ -62,7 +62,7 @@ export default async function handler(
       }
 
       const newProduct: Product = {
-        id: `id_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        id: req.body.id || `id_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         name: name.trim(),
         brand: brand?.trim() || '',
         category,
@@ -70,9 +70,9 @@ export default async function handler(
         discount: parseFloat(discount) || 0,
         description: description?.trim() || '',
         image: image || null,
-        published: true,
+        published: req.body.published !== undefined ? (req.body.published === true || req.body.published === 'true') : true,
         colors: colors || [],
-        createdAt: new Date().toISOString(),
+        createdAt: req.body.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
 

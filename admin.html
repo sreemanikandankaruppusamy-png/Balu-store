@@ -550,17 +550,35 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 
 /* ======== DATA FUNCTIONS ======== */
 async function getProducts() {
-  // API is the single source of truth — only use local cache as offline fallback
+  // API is the primary source of truth
+  let apiProducts = null;
   try {
     const data = await apiCall('/products');
     if (Array.isArray(data)) {
-      // API succeeded: use API data as-is, update local cache
-      const sorted = data.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-      safeSetStorage('sbef_cached_products', sorted);
-      return sorted;
+      apiProducts = data;
     }
   } catch (error) {
     console.warn('Failed to load products from API, using local cache:', error);
+  }
+
+  if (apiProducts !== null) {
+    // API succeeded: use API data as primary
+    // But also check for any very recently added local products not yet in API
+    // (handles Vercel serverless cold-start delay)
+    const localCached = safeGetStorage('sbef_cached_products');
+    const localList = Array.isArray(localCached) ? localCached : [];
+    const apiIds = new Set(apiProducts.map(p => p.id));
+    const recentThreshold = Date.now() - 60000; // 60 seconds
+    const recentLocal = localList.filter(p => {
+      if (!p || !p.id || apiIds.has(p.id)) return false;
+      const created = new Date(p.createdAt || 0).getTime();
+      return created > recentThreshold;
+    });
+
+    const merged = [...apiProducts, ...recentLocal];
+    merged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    safeSetStorage('sbef_cached_products', merged);
+    return merged;
   }
 
   // Offline fallback: use local cached data
